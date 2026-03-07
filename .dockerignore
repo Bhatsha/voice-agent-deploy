@@ -1,0 +1,11 @@
+.env
+.git
+.claude
+__pycache__
+*.pyc
+.venv
+browser-tester
+node_modules
+agent-log.md
+*.md
+!requirements.txt

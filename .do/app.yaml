@@ -1,0 +1,35 @@
+name: voice-agent
+region: blr
+services:
+  - name: voice-agent
+    dockerfile_path: Dockerfile
+    github:
+      repo: YOUR_GITHUB_USERNAME/voice-agent-deploy
+      branch: master
+      deploy_on_push: true
+    http_port: 8080
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    envs:
+      - key: SARVAM_API_KEYS
+        value: "your_sarvam_api_keys_here"
+        type: SECRET
+      - key: OPENAI_API_KEY
+        value: "your_openai_api_key_here"
+        type: SECRET
+      - key: EXOTEL_ACCOUNT_SID
+        value: "your_exotel_account_sid"
+      - key: EXOTEL_API_KEY
+        value: "your_exotel_api_key"
+        type: SECRET
+      - key: EXOTEL_API_TOKEN
+        value: "your_exotel_api_token"
+        type: SECRET
+      - key: EXOTEL_PHONE_NUMBER
+        value: "your_exotel_phone_number"
+      - key: EXOTEL_APP_ID
+        value: "your_exotel_app_id"
+      - key: WEBHOOK_URL
+        value: "https://your-webhook-url/endpoint"
+      - key: PORT
+        value: "8080"
