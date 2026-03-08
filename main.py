@@ -251,7 +251,7 @@ async def exotel_websocket(ws: WebSocket):
                         order_data = pending_orders.pop(norm)
                         logger.info(f"Found pending order in memory for {norm}: {order_data['order_id']}")
                     if not order_data:
-                        logger.info(f"No pending order for {norm}, using default")
+                        logger.warning(f"No pending order found for {norm}")
 
                 # Browser tester sends order data directly in start event
                 if not order_data and start_data.get("order_id"):
@@ -262,6 +262,10 @@ async def exotel_websocket(ws: WebSocket):
                         "items": start_data.get("items", []),
                     }
                     logger.info(f"Using browser-provided order: {order_data['order_id']}")
+
+                if not order_data:
+                    logger.error(f"No order data for call {call_sid} — ending connection")
+                    break
 
                 agent = VoiceAgent(
                     exotel_ws=ws,

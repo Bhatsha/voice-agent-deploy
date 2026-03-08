@@ -32,7 +32,9 @@ class VoiceAgent:
         self.exotel_ws = exotel_ws
         self.stream_sid = stream_sid
         self.call_sid = call_sid
-        self.order_data = order_data or config.DEFAULT_ORDER
+        if not order_data:
+            raise ValueError("No order data provided — cannot start call without order")
+        self.order_data = order_data
         self._api_key = api_key
         self._on_key_release = on_key_release
         self._key_released = False

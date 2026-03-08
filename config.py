@@ -104,18 +104,6 @@ def amount_to_tamil(n: int) -> str:
     return " ".join(parts)
 
 
-# Default order for testing/browser simulation
-DEFAULT_ORDER = {
-    "order_id": "ORD-2024-7891",
-    "vendor_name": "Kavin",
-    "company_name": "Keeggi",
-    "items": [
-        {"name": "Chicken Biryani", "qty": 2, "price": 250, "variation": None},
-        {"name": "Paneer Butter Masala", "qty": 1, "price": 220, "variation": None},
-        {"name": "Naan (3 pcs)", "qty": 1, "price": 60, "variation": None},
-        {"name": "Murthaba", "qty": 1, "price": 100, "variation": "small"},
-    ],
-}
 
 
 def _build_items_summary(order: dict) -> str:
