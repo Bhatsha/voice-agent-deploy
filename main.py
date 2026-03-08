@@ -1,6 +1,8 @@
 import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import List, Optional
 
 import httpx
@@ -37,6 +39,37 @@ PENDING_ORDERS_COLLECTION = "pending_orders"
 
 # In-memory fallback for single-server deployments (no Firestore needed)
 pending_orders: dict[str, dict] = {}
+
+# File-based pending orders — works across multiple workers/instances on same machine
+PENDING_ORDERS_DIR = Path(os.getenv("PENDING_ORDERS_DIR", "/tmp/pending_orders"))
+PENDING_ORDERS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_pending_order(phone: str, order_data: dict):
+    """Save pending order to file (shared across workers)."""
+    filepath = PENDING_ORDERS_DIR / f"{phone}.json"
+    filepath.write_text(json.dumps(order_data))
+    logger.info(f"Stored pending order to file for {phone}: {order_data['order_id']}")
+
+
+def _load_pending_order(phone: str) -> Optional[dict]:
+    """Load and delete pending order from file."""
+    filepath = PENDING_ORDERS_DIR / f"{phone}.json"
+    if filepath.exists():
+        try:
+            order_data = json.loads(filepath.read_text())
+            filepath.unlink()  # Delete after reading
+            logger.info(f"Found pending order in file for {phone}: {order_data['order_id']}")
+            return order_data
+        except Exception as e:
+            logger.error(f"Error reading pending order file for {phone}: {e}")
+    return None
+
+
+def _delete_pending_order(phone: str):
+    """Delete pending order file."""
+    filepath = PENDING_ORDERS_DIR / f"{phone}.json"
+    filepath.unlink(missing_ok=True)
 
 
 @app.on_event("startup")
@@ -103,14 +136,14 @@ async def trigger_call(req: CallRequest):
         "items": [{"name": i.name, "qty": i.qty, "price": i.price, "variation": i.variation} for i in req.items],
     }
 
-    # Store order for WebSocket pickup: Firestore (Cloud Run) or in-memory (single server)
+    # Store order for WebSocket pickup
     norm_phone = _normalize_phone(phone)
     if db:
         db.collection(PENDING_ORDERS_COLLECTION).document(norm_phone).set(order_data)
         logger.info(f"Stored pending order in Firestore for {norm_phone}: {req.order_id}")
     else:
         pending_orders[norm_phone] = order_data
-        logger.info(f"Stored pending order in memory for {norm_phone}: {req.order_id}")
+        _save_pending_order(norm_phone, order_data)
 
     # Ensure phone has country code for Exotel
     exotel_phone = phone if phone.startswith("91") else f"91{phone}"
@@ -143,11 +176,13 @@ async def trigger_call(req: CallRequest):
                 if db:
                     db.collection(PENDING_ORDERS_COLLECTION).document(norm_phone).delete()
                 pending_orders.pop(norm_phone, None)
+                _delete_pending_order(norm_phone)
                 return {"status": "error", "code": resp.status_code, "detail": resp.text[:300]}
     except Exception as e:
         if db:
             db.collection(PENDING_ORDERS_COLLECTION).document(norm_phone).delete()
         pending_orders.pop(norm_phone, None)
+        _delete_pending_order(norm_phone)
         logger.error(f"Failed to trigger call: {e}")
         return {"status": "error", "detail": str(e)}
 
@@ -199,7 +234,7 @@ async def exotel_websocket(ws: WebSocket):
                         logger.error(f"Key pool checkout failed for {call_sid}: {e}")
                         break
 
-                # Look up order data: Firestore (Cloud Run) or in-memory (single server)
+                # Look up order data: Firestore → file → in-memory → default
                 order_data = None
                 if from_number:
                     norm = _normalize_phone(from_number)
@@ -210,6 +245,8 @@ async def exotel_websocket(ws: WebSocket):
                             order_data = doc.to_dict()
                             doc_ref.delete()
                             logger.info(f"Found pending order in Firestore for {norm}: {order_data['order_id']}")
+                    if not order_data:
+                        order_data = _load_pending_order(norm)
                     if not order_data and norm in pending_orders:
                         order_data = pending_orders.pop(norm)
                         logger.info(f"Found pending order in memory for {norm}: {order_data['order_id']}")
