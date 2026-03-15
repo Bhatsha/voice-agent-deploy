@@ -107,7 +107,7 @@ def amount_to_tamil(n: int) -> str:
 
 
 def _build_items_summary(order: dict) -> str:
-    """Build natural-sounding item summary for speech (no price)"""
+    """Build natural-sounding item summary for speech"""
     parts = []
     for item in order["items"]:
         qty_tamil = amount_to_tamil(item["qty"])
@@ -117,6 +117,21 @@ def _build_items_summary(order: dict) -> str:
         else:
             parts.append(f"{item['name']} {qty_tamil}")
     return " ... ".join(parts) + " ... "
+
+
+def _build_items_with_price(order: dict) -> str:
+    """Build item summary with individual prices for system prompt"""
+    parts = []
+    for item in order["items"]:
+        qty_tamil = amount_to_tamil(item["qty"])
+        price = item["price"]
+        total_item = price * item["qty"]
+        variation = item.get("variation")
+        if variation:
+            parts.append(f"{item['name']} {variation} {qty_tamil} — ₹{price} each, ₹{total_item} total")
+        else:
+            parts.append(f"{item['name']} {qty_tamil} — ₹{price} each, ₹{total_item} total")
+    return "\n    ".join(parts)
 
 
 def _calc_total(order: dict) -> int:
@@ -135,11 +150,14 @@ def build_greeting_intro(order: dict) -> str:
 
 
 def build_greeting_items(order: dict) -> str:
-    """Order details — items + question. Spoken after vendor acknowledges."""
+    """Order details — items + total + question. Spoken after vendor acknowledges."""
     items_summary = _build_items_summary(order)
+    total = _calc_total(order)
+    total_tamil = amount_to_tamil(total)
     return (
         f"Order ID {order['order_id']}... "
         f"{items_summary} "
+        f"total {total_tamil} ரூபாய்... "
         f"இது ஓகே-வா?"
     )
 
@@ -152,11 +170,15 @@ def build_greeting(order: dict) -> str:
 def build_system_prompt(order: dict) -> str:
     """Full system prompt for the voice agent LLM"""
     items_summary = _build_items_summary(order)
+    items_with_price = _build_items_with_price(order)
+    total = _calc_total(order)
+    total_tamil = amount_to_tamil(total)
     order_details = (
         f"- Order ID: {order['order_id']}\n"
         f"- Vendor: {order['vendor_name']}\n"
         f"- Company: {order['company_name']}\n"
-        f"- Items: {items_summary}"
+        f"- Items:\n    {items_with_price}\n"
+        f"- Total: ₹{total} ({total_tamil} ரூபாய்)"
     )
 
     return f"""You are a Tamil voice agent calling restaurant vendors to confirm food orders.
@@ -240,7 +262,7 @@ INTENT HANDLING:
    - CRITICAL: This is ALWAYS order-related — NEVER deflect it.
    - Start with: "சரி, சொல்றேன்..." or "ஓகே, மறுபடி சொல்றேன்..." or "ஆர்டர் இதான்..."
    - Repeat FULL order: items with quantities (and variation like small/medium/large if present) in spoken Tamil.
-   - Do NOT mention price or total — only items, quantities, and variations.
+   - If vendor specifically asks about price/total/amount, tell them the price details and total.
    - Vary phrasing each time to sound human.
    - After repeat, gently ask: "இப்போ ஓகே-வா?"
    - Set status: CONFIRMING
@@ -251,7 +273,7 @@ INTENT HANDLING:
    - Always try to match order-related intent first before calling unclear.
 
 IMPORTANT BEHAVIOR RULES:
-- NEVER mention price or total amount — only items, quantities, and variations.
+- Say total price in the initial greeting. If vendor asks about individual item prices, tell them.
 - NEVER deflect order-related questions (repeat, details, quantity, items). Always answer using order details below.
 - Only deflect COMPLETELY unrelated topics (weather, sports, personal, other business): "இது order confirmation call மட்டும் தான்... ஆர்டர் ஓகே-வா?"
 - NEVER say "I am AI" or "I am a bot". Stay in character as Ramesh.
