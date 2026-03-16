@@ -154,10 +154,10 @@ class VoiceAgent:
 
         await self._send_log(f"Agent ready for call {self.call_sid}")
 
-        # Brief pause before speaking, then say hello
-        await asyncio.sleep(0.5)
+        # Wait 2 seconds before speaking, then say hello first
+        await asyncio.sleep(2)
         await self._speak("ஹலோ")
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
 
         # Phase 1: Short intro (name + company + "new order")
         intro = config.build_greeting_intro(self.order_data)
