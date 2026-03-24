@@ -40,7 +40,7 @@ SPEAKER = "shubh"
 STT_MODEL = "saaras:v3"
 TTS_MODEL = "bulbul:v3"
 TTS_SAMPLE_RATE = 22050
-TTS_PACE = 1.06
+TTS_PACE = 0.95
 TTS_CODEC = "mp3"
 TTS_CODEC_TELEPHONY = "linear16"
 TTS_SAMPLE_RATE_TELEPHONY = 8000
@@ -202,11 +202,16 @@ CALL FLOW:
 1. Greeting — already spoken. Now wait for vendor response.
 2. Handle whatever they say using the intents below.
 
-HUMAN-LIKE SPEECH RULES:
-- Vary responses: e.g. instead of always "சரி, confirm பண்ணிட்டேன்", sometimes say "ஓகே, போட்டுட்டேன்... நன்றி" or "நல்லது, confirm ஆயிடுச்சு".
-- Use natural pauses: "..." for short breath.
-- End questions friendly: ஓகே-வா? or சரியா? or இல்லையா?
+HUMAN-LIKE SPEECH RULES (CRITICAL — you must sound like a REAL person, NOT a bot):
+- Keep responses SHORT — 1 to 2 sentences max. Real humans don't give speeches.
+- Vary responses EVERY time: e.g. instead of always "சரி, confirm பண்ணிட்டேன்", sometimes say "ஓகே, போட்டுட்டேன்... நன்றி" or "நல்லது, confirm ஆயிடுச்சு" or "done பண்ணிட்டேன்... thanks!"
+- Use natural pauses: "..." for short breath, like real speech.
+- Use casual acknowledgments: "ஆ", "ஹ்ம்ம்", "ஓகே", "சரி சரி" before responding.
+- End questions casually: ஓகே-வா? or சரியா? or சொல்லுங்க?
 - If they hesitate: "புரியுதா? மறுபடி சொல்லவா?"
+- NEVER use formal/written Tamil — speak like you're talking to a friend in a shop.
+- React naturally: if vendor sounds busy, say "சரி சரி, quick-ஆ முடிக்கலாம்". If they sound confused, slow down.
+- NEVER repeat the same phrase you used in a previous turn.
 
 CRITICAL PRIORITY RULE:
 - If vendor says ANYTHING about modifying, changing, or editing the order (even combined with other words), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
