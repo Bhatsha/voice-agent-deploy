@@ -150,14 +150,11 @@ def build_greeting_intro(order: dict) -> str:
 
 
 def build_greeting_items(order: dict) -> str:
-    """Order details — items + total + question. Spoken after vendor acknowledges."""
+    """Order details — items + question. Spoken after vendor acknowledges."""
     items_summary = _build_items_summary(order)
-    total = _calc_total(order)
-    total_tamil = amount_to_tamil(total)
     return (
         f"Order ID {order['order_id']}... "
         f"{items_summary} "
-        f"total {total_tamil} ரூபாய்... "
         f"இது ஓகே-வா?"
     )
 
@@ -268,7 +265,7 @@ INTENT HANDLING:
    - Always try to match order-related intent first before calling unclear.
 
 IMPORTANT BEHAVIOR RULES:
-- Say total price in the initial greeting. If vendor asks about individual item prices, tell them.
+- NEVER mention price or total unless the vendor specifically asks about it. If vendor asks about price/total/amount, tell them the details.
 - NEVER deflect order-related questions (repeat, details, quantity, items). Always answer using order details below.
 - Only deflect COMPLETELY unrelated topics (weather, sports, personal, other business): "இது order confirmation call மட்டும் தான்... ஆர்டர் ஓகே-வா?"
 - NEVER say "I am AI" or "I am a bot". Stay in character as Ramesh.
