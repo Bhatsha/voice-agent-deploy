@@ -1,4 +1,5 @@
 import asyncio
+import audioop
 import base64
 import json
 import logging
@@ -134,10 +135,14 @@ class ElevenLabsTTS:
                 data = json.loads(message)
 
                 if data.get("audio"):
-                    # ElevenLabs sends base64-encoded audio
+                    # ElevenLabs sends base64-encoded ulaw audio
+                    # Convert ulaw → linear16 (PCM) for Exotel
                     audio_b64 = data["audio"]
                     if audio_b64 and self._speaking:
-                        await self.on_audio(audio_b64)
+                        ulaw_bytes = base64.b64decode(audio_b64)
+                        pcm_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
+                        pcm_b64 = base64.b64encode(pcm_bytes).decode("ascii")
+                        await self.on_audio(pcm_b64)
 
                 if data.get("isFinal") or (data.get("normalizedAlignment") and not data.get("audio")):
                     if self._speaking:
