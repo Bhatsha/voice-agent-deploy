@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import logging
+import struct
 import time
 from typing import Callable, Optional
 
@@ -59,7 +60,7 @@ class ElevenLabsTTS:
         self._playback_task = asyncio.create_task(self._generate_and_play(text))
 
     async def _generate_and_play(self, text: str):
-        """Fetch PCM audio from ElevenLabs and play with real-time pacing."""
+        """Fetch PCM audio from ElevenLabs, downsample, and play."""
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
         headers = {
             "xi-api-key": self._api_key,
@@ -68,7 +69,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "pcm_8000",
+            "output_format": "pcm_16000",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -86,22 +87,33 @@ class ElevenLabsTTS:
                     self._speaking = False
                     return
 
-                # pcm_8000 = raw linear16 PCM at 8kHz — exactly what Exotel expects
-                pcm_audio = resp.content
-                self._log(f"Got {len(pcm_audio)} bytes of PCM audio")
+                pcm_16k = resp.content
+                self._log(f"Got {len(pcm_16k)} bytes of PCM 16kHz audio")
 
-            if not self._speaking or not pcm_audio:
+            if not self._speaking or not pcm_16k:
                 return
 
-            # Play audio in real-time paced chunks (no conversion needed)
+            # Ensure even byte count for 16-bit samples
+            if len(pcm_16k) % 2 != 0:
+                pcm_16k = pcm_16k[:-1]
+
+            # Downsample 16kHz → 8kHz: take every other sample
+            num_samples = len(pcm_16k) // 2
+            samples_16k = struct.unpack(f"<{num_samples}h", pcm_16k)
+            samples_8k = samples_16k[::2]
+            pcm_8k = struct.pack(f"<{len(samples_8k)}h", *samples_8k)
+
+            self._log(f"Downsampled to {len(pcm_8k)} bytes of PCM 8kHz audio")
+
+            # Play audio in real-time paced chunks
             start_time = time.monotonic()
             bytes_sent = 0
 
-            for i in range(0, len(pcm_audio), CHUNK_BYTES):
+            for i in range(0, len(pcm_8k), CHUNK_BYTES):
                 if not self._speaking:
                     break
 
-                chunk = pcm_audio[i:i + CHUNK_BYTES]
+                chunk = pcm_8k[i:i + CHUNK_BYTES]
                 audio_b64 = base64.b64encode(chunk).decode("ascii")
                 await self.on_audio(audio_b64)
                 bytes_sent += len(chunk)
