@@ -85,26 +85,28 @@ class ElevenLabsTTS:
                     self._connected = False
 
     async def speak(self, text: str):
-        """Convert text to speech."""
-        if not self._connected or not self.ws:
-            self._log("Not connected, reconnecting...")
-            await self.connect()
-            if not self._connected:
-                self._log("Reconnect failed, cannot speak")
-                return
+        """Convert text to speech. Reconnects each time as ElevenLabs uses one stream per generation."""
+        # Always reconnect for fresh stream
+        if self._connected and self.ws:
+            try:
+                await self.ws.close()
+            except Exception:
+                pass
+            self._connected = False
+
+        await self.connect()
+        if not self._connected:
+            self._log("Connect failed, cannot speak")
+            return
 
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
 
         try:
-            # Send text
+            # Send text with flush
             await self.ws.send(json.dumps({
-                "text": text,
-                "try_trigger_generation": True,
-            }))
-            # Send empty string to flush/trigger generation
-            await self.ws.send(json.dumps({
-                "text": "",
+                "text": text + " ",
+                "flush": True,
             }))
         except websockets.exceptions.ConnectionClosed:
             self._log("Connection closed during speak, reconnecting...")
@@ -115,11 +117,8 @@ class ElevenLabsTTS:
                 try:
                     self._speaking = True
                     await self.ws.send(json.dumps({
-                        "text": text,
-                        "try_trigger_generation": True,
-                    }))
-                    await self.ws.send(json.dumps({
-                        "text": "",
+                        "text": text + " ",
+                        "flush": True,
                     }))
                 except Exception as e:
                     self._log(f"Retry failed: {e}")
@@ -140,11 +139,12 @@ class ElevenLabsTTS:
                     if audio_b64 and self._speaking:
                         await self.on_audio(audio_b64)
 
-                if data.get("isFinal"):
-                    self._speaking = False
-                    self._log("Finished speaking")
-                    if self.on_done:
-                        await self.on_done()
+                if data.get("isFinal") or (data.get("normalizedAlignment") and not data.get("audio")):
+                    if self._speaking:
+                        self._speaking = False
+                        self._log("Finished speaking")
+                        if self.on_done:
+                            await self.on_done()
 
                 if data.get("error"):
                     self._log(f"Error: {data['error']}")
