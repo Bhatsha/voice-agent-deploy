@@ -1,5 +1,4 @@
 import asyncio
-import audioop
 import base64
 import logging
 import time
@@ -12,10 +11,10 @@ import config
 logger = logging.getLogger(__name__)
 
 # linear16 8kHz mono: 16000 bytes per second (2 bytes per sample)
-BYTES_PER_SECOND_LINEAR16 = 16000
-# Send 20ms chunks of linear16
+BYTES_PER_SECOND = 16000
+# Send 20ms chunks
 CHUNK_DURATION_MS = 20
-CHUNK_BYTES_LINEAR16 = int(BYTES_PER_SECOND_LINEAR16 * CHUNK_DURATION_MS / 1000)  # 320 bytes
+CHUNK_BYTES = int(BYTES_PER_SECOND * CHUNK_DURATION_MS / 1000)  # 320 bytes
 
 
 class ElevenLabsTTS:
@@ -47,7 +46,6 @@ class ElevenLabsTTS:
 
     async def speak(self, text: str):
         """Start TTS — returns immediately, audio plays in background."""
-        # Cancel any existing playback
         if self._playback_task and not self._playback_task.done():
             self._speaking = False
             self._playback_task.cancel()
@@ -61,7 +59,7 @@ class ElevenLabsTTS:
         self._playback_task = asyncio.create_task(self._generate_and_play(text))
 
     async def _generate_and_play(self, text: str):
-        """Fetch audio from ElevenLabs and play with real-time pacing."""
+        """Fetch PCM audio from ElevenLabs and play with real-time pacing."""
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
         headers = {
             "xi-api-key": self._api_key,
@@ -70,7 +68,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "ulaw_8000",
+            "output_format": "pcm_8000",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -88,31 +86,28 @@ class ElevenLabsTTS:
                     self._speaking = False
                     return
 
-                ulaw_audio = resp.content
-                self._log(f"Got {len(ulaw_audio)} bytes of ulaw audio")
+                # pcm_8000 = raw linear16 PCM at 8kHz — exactly what Exotel expects
+                pcm_audio = resp.content
+                self._log(f"Got {len(pcm_audio)} bytes of PCM audio")
 
-            if not self._speaking or not ulaw_audio:
+            if not self._speaking or not pcm_audio:
                 return
 
-            # Convert ulaw → linear16 PCM (what Exotel expects)
-            pcm_audio = audioop.ulaw2lin(ulaw_audio, 2)
-            self._log(f"Converted to {len(pcm_audio)} bytes of linear16 PCM")
-
-            # Play audio in real-time paced chunks
+            # Play audio in real-time paced chunks (no conversion needed)
             start_time = time.monotonic()
             bytes_sent = 0
 
-            for i in range(0, len(pcm_audio), CHUNK_BYTES_LINEAR16):
+            for i in range(0, len(pcm_audio), CHUNK_BYTES):
                 if not self._speaking:
                     break
 
-                chunk = pcm_audio[i:i + CHUNK_BYTES_LINEAR16]
+                chunk = pcm_audio[i:i + CHUNK_BYTES]
                 audio_b64 = base64.b64encode(chunk).decode("ascii")
                 await self.on_audio(audio_b64)
                 bytes_sent += len(chunk)
 
-                # Pace to real-time (linear16 rate)
-                expected_time = bytes_sent / BYTES_PER_SECOND_LINEAR16
+                # Pace to real-time
+                expected_time = bytes_sent / BYTES_PER_SECOND
                 elapsed = time.monotonic() - start_time
                 delay = expected_time - elapsed
                 if delay > 0:
