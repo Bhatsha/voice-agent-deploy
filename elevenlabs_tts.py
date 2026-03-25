@@ -1,7 +1,7 @@
 import asyncio
-import audioop
 import base64
 import logging
+import struct
 from typing import Callable, Optional
 
 import httpx
@@ -42,7 +42,6 @@ class ElevenLabsTTS:
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
 
-        # Use pcm_16000: raw PCM 16-bit signed little-endian at 16kHz
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream"
         headers = {
             "xi-api-key": self._api_key,
@@ -62,7 +61,6 @@ class ElevenLabsTTS:
 
         try:
             leftover = b""
-            state = None
             async with httpx.AsyncClient(timeout=30) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
@@ -77,21 +75,25 @@ class ElevenLabsTTS:
                         if not chunk:
                             continue
 
-                        # Combine with leftover
                         raw = leftover + chunk
 
-                        # Ensure even byte count for 16-bit PCM
-                        if len(raw) % 2 != 0:
-                            leftover = raw[-1:]
-                            raw = raw[:-1]
+                        # Need multiple of 4 bytes (2 samples × 2 bytes) for 2:1 downsample
+                        remainder = len(raw) % 4
+                        if remainder:
+                            leftover = raw[-remainder:]
+                            raw = raw[:-remainder]
                         else:
                             leftover = b""
 
-                        if len(raw) < 2:
+                        if len(raw) < 4:
                             continue
 
-                        # Downsample 16kHz → 8kHz (matches Exotel linear16 8kHz)
-                        pcm_8k, state = audioop.ratecv(raw, 2, 1, 16000, 8000, state)
+                        # Downsample 16kHz → 8kHz: take every other 16-bit sample
+                        num_samples = len(raw) // 2
+                        samples = struct.unpack(f"<{num_samples}h", raw)
+                        downsampled = samples[::2]
+                        pcm_8k = struct.pack(f"<{len(downsampled)}h", *downsampled)
+
                         audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
                         await self.on_audio(audio_b64)
 
