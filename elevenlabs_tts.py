@@ -65,7 +65,6 @@ class ElevenLabsTTS:
         headers = {
             "xi-api-key": self._api_key,
             "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
         }
         payload = {
             "text": text,
