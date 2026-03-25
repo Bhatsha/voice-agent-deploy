@@ -12,6 +12,7 @@ import config
 from sarvam_stt import SarvamSTT
 from sarvam_tts import SarvamTTS
 from sarvam_llm import SarvamLLM
+from elevenlabs_tts import ElevenLabsTTS
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,14 @@ class VoiceAgent:
 
         # Use telephony codec for real Exotel calls, mp3 for browser tester
         is_real_call = not self.call_sid.startswith("test-")
-        if is_real_call:
+        use_elevenlabs = config.TTS_PROVIDER == "elevenlabs" and config.ELEVENLABS_API_KEY
+
+        if use_elevenlabs:
+            self.tts = ElevenLabsTTS(
+                on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
+                sample_rate=config.TTS_SAMPLE_RATE_TELEPHONY if is_real_call else config.TTS_SAMPLE_RATE,
+            )
+        elif is_real_call:
             self.tts = SarvamTTS(
                 on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
                 codec=config.TTS_CODEC_TELEPHONY, sample_rate=config.TTS_SAMPLE_RATE_TELEPHONY,
