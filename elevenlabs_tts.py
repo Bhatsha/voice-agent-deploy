@@ -1,4 +1,5 @@
 import asyncio
+import audioop
 import base64
 import logging
 import time
@@ -10,11 +11,11 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# ulaw 8kHz mono: 8000 bytes per second (1 byte per sample)
-BYTES_PER_SECOND = 8000
-# Send 20ms chunks
+# linear16 8kHz mono: 16000 bytes per second (2 bytes per sample)
+BYTES_PER_SECOND_LINEAR16 = 16000
+# Send 20ms chunks of linear16
 CHUNK_DURATION_MS = 20
-CHUNK_BYTES = int(BYTES_PER_SECOND * CHUNK_DURATION_MS / 1000)  # 160 bytes
+CHUNK_BYTES_LINEAR16 = int(BYTES_PER_SECOND_LINEAR16 * CHUNK_DURATION_MS / 1000)  # 320 bytes
 
 
 class ElevenLabsTTS:
@@ -93,21 +94,25 @@ class ElevenLabsTTS:
             if not self._speaking or not ulaw_audio:
                 return
 
+            # Convert ulaw → linear16 PCM (what Exotel expects)
+            pcm_audio = audioop.ulaw2lin(ulaw_audio, 2)
+            self._log(f"Converted to {len(pcm_audio)} bytes of linear16 PCM")
+
             # Play audio in real-time paced chunks
             start_time = time.monotonic()
             bytes_sent = 0
 
-            for i in range(0, len(ulaw_audio), CHUNK_BYTES):
+            for i in range(0, len(pcm_audio), CHUNK_BYTES_LINEAR16):
                 if not self._speaking:
                     break
 
-                chunk = ulaw_audio[i:i + CHUNK_BYTES]
+                chunk = pcm_audio[i:i + CHUNK_BYTES_LINEAR16]
                 audio_b64 = base64.b64encode(chunk).decode("ascii")
                 await self.on_audio(audio_b64)
                 bytes_sent += len(chunk)
 
-                # Pace to real-time
-                expected_time = bytes_sent / BYTES_PER_SECOND
+                # Pace to real-time (linear16 rate)
+                expected_time = bytes_sent / BYTES_PER_SECOND_LINEAR16
                 elapsed = time.monotonic() - start_time
                 delay = expected_time - elapsed
                 if delay > 0:
