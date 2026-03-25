@@ -53,7 +53,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "pcm_16000",
+            "output_format": "pcm_22050",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -71,13 +71,23 @@ class ElevenLabsTTS:
                         self._speaking = False
                         return
 
+                    leftover = b""
                     async for chunk in resp.aiter_bytes(chunk_size=4096):
                         if not self._speaking:
                             break
                         if chunk:
-                            # ElevenLabs sends PCM 16-bit 16kHz
-                            # Downsample 16kHz → 8kHz for Exotel (linear16 8kHz)
-                            pcm_8k = audioop.ratecv(chunk, 2, 1, 16000, 8000, None)[0]
+                            # Prepend any leftover bytes from previous chunk
+                            raw = leftover + chunk
+                            # Ensure even number of bytes (16-bit PCM = 2 bytes per sample)
+                            if len(raw) % 2 != 0:
+                                leftover = raw[-1:]
+                                raw = raw[:-1]
+                            else:
+                                leftover = b""
+                            if not raw:
+                                continue
+                            # Downsample 22050Hz → 8000Hz for Exotel
+                            pcm_8k = audioop.ratecv(raw, 2, 1, 22050, 8000, None)[0]
                             audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
                             await self.on_audio(audio_b64)
 
