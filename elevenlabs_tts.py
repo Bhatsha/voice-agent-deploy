@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import logging
-import struct
 import time
 from typing import Callable, Optional
 
@@ -11,15 +10,15 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# At 8kHz 16-bit mono: 16000 bytes per second
-BYTES_PER_SECOND_8K = 16000
-# Send chunks of ~20ms worth of audio
+# ulaw 8kHz mono: 8000 bytes per second (1 byte per sample)
+BYTES_PER_SECOND = 8000
+# Send 20ms chunks
 CHUNK_DURATION_MS = 20
-CHUNK_BYTES = int(BYTES_PER_SECOND_8K * CHUNK_DURATION_MS / 1000)  # 320 bytes per chunk
+CHUNK_BYTES = int(BYTES_PER_SECOND * CHUNK_DURATION_MS / 1000)  # 160 bytes
 
 
 class ElevenLabsTTS:
-    """Text-to-Speech client for ElevenLabs using HTTP streaming API."""
+    """Text-to-Speech client for ElevenLabs."""
 
     def __init__(self, on_audio: Callable, on_log: Callable = None, on_done: Callable = None,
                  codec: str = None, sample_rate: int = None, api_key: str = None):
@@ -30,6 +29,7 @@ class ElevenLabsTTS:
         self._voice_id = config.ELEVENLABS_VOICE_ID
         self._speaking = False
         self._connected = False
+        self._playback_task: Optional[asyncio.Task] = None
 
     def _log(self, msg):
         logger.info(msg)
@@ -42,22 +42,35 @@ class ElevenLabsTTS:
 
     async def connect(self):
         self._connected = True
-        self._log("ElevenLabs TTS ready (HTTP mode)")
+        self._log("ElevenLabs TTS ready")
 
     async def speak(self, text: str):
-        """Convert text to speech via HTTP streaming with real-time pacing."""
+        """Start TTS — returns immediately, audio plays in background."""
+        # Cancel any existing playback
+        if self._playback_task and not self._playback_task.done():
+            self._speaking = False
+            self._playback_task.cancel()
+            try:
+                await self._playback_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
+        self._playback_task = asyncio.create_task(self._generate_and_play(text))
 
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream"
+    async def _generate_and_play(self, text: str):
+        """Fetch audio from ElevenLabs and play with real-time pacing."""
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
         headers = {
             "xi-api-key": self._api_key,
             "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
         }
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "pcm_16000",
+            "output_format": "ulaw_8000",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -67,52 +80,39 @@ class ElevenLabsTTS:
         }
 
         try:
-            # Collect all PCM 16kHz audio first
-            pcm_16k = b""
             async with httpx.AsyncClient(timeout=30) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        error_text = await resp.aread()
-                        self._log(f"HTTP error {resp.status_code}: {error_text[:200]}")
-                        self._speaking = False
-                        return
+                resp = await client.post(url, json=payload, headers=headers)
 
-                    async for chunk in resp.aiter_bytes():
-                        if not self._speaking:
-                            break
-                        pcm_16k += chunk
+                if resp.status_code != 200:
+                    self._log(f"HTTP error {resp.status_code}: {resp.text[:200]}")
+                    self._speaking = False
+                    return
 
-            if not self._speaking:
+                ulaw_audio = resp.content
+                self._log(f"Got {len(ulaw_audio)} bytes of ulaw audio")
+
+            if not self._speaking or not ulaw_audio:
                 return
 
-            # Ensure even byte count
-            if len(pcm_16k) % 2 != 0:
-                pcm_16k = pcm_16k[:-1]
-
-            # Downsample 16kHz → 8kHz: take every other sample
-            num_samples = len(pcm_16k) // 2
-            samples = struct.unpack(f"<{num_samples}h", pcm_16k)
-            downsampled = samples[::2]
-            pcm_8k = struct.pack(f"<{len(downsampled)}h", *downsampled)
-
-            # Send audio in real-time paced chunks
+            # Play audio in real-time paced chunks
             start_time = time.monotonic()
             bytes_sent = 0
 
-            for i in range(0, len(pcm_8k), CHUNK_BYTES):
+            for i in range(0, len(ulaw_audio), CHUNK_BYTES):
                 if not self._speaking:
                     break
 
-                chunk = pcm_8k[i:i + CHUNK_BYTES]
+                chunk = ulaw_audio[i:i + CHUNK_BYTES]
                 audio_b64 = base64.b64encode(chunk).decode("ascii")
                 await self.on_audio(audio_b64)
                 bytes_sent += len(chunk)
 
-                # Pace: wait until real-time catches up
-                expected_time = bytes_sent / BYTES_PER_SECOND_8K
+                # Pace to real-time
+                expected_time = bytes_sent / BYTES_PER_SECOND
                 elapsed = time.monotonic() - start_time
-                if expected_time > elapsed:
-                    await asyncio.sleep(expected_time - elapsed)
+                delay = expected_time - elapsed
+                if delay > 0:
+                    await asyncio.sleep(delay)
 
             if self._speaking:
                 self._speaking = False
@@ -120,14 +120,20 @@ class ElevenLabsTTS:
                 if self.on_done:
                     await self.on_done()
 
+        except asyncio.CancelledError:
+            self._speaking = False
         except Exception as e:
             self._log(f"Speak error: {e}")
             self._speaking = False
 
     async def stop(self):
         self._speaking = False
+        if self._playback_task and not self._playback_task.done():
+            self._playback_task.cancel()
 
     async def close(self):
         self._speaking = False
         self._connected = False
+        if self._playback_task and not self._playback_task.done():
+            self._playback_task.cancel()
         logger.info("ElevenLabs TTS closed")
