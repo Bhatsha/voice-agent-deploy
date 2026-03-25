@@ -39,8 +39,8 @@ class ElevenLabsTTS:
     def is_speaking(self) -> bool:
         return self._speaking
 
-    async def connect(self):
-        """Open WebSocket connection to ElevenLabs TTS."""
+    async def _new_connection(self):
+        """Create a new WebSocket connection to ElevenLabs."""
         model_id = config.ELEVENLABS_MODEL
         url = (
             f"wss://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream-input"
@@ -49,68 +49,65 @@ class ElevenLabsTTS:
         )
         headers = {"xi-api-key": self._api_key}
 
+        self.ws = await websockets.connect(
+            url,
+            additional_headers=headers,
+            ping_interval=20,
+            ping_timeout=10,
+        )
+
+        # Send BOS (beginning of stream) config
+        await self.ws.send(json.dumps({
+            "text": " ",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.8,
+                "style": 0.3,
+                "use_speaker_boost": True,
+            },
+            "generation_config": {
+                "chunk_length_schedule": [120, 160, 250, 290],
+            },
+            "xi_api_key": self._api_key,
+        }))
+
+    async def connect(self):
+        """Open WebSocket connection to ElevenLabs TTS."""
         for attempt in range(self.MAX_CONNECT_RETRIES):
             try:
-                self.ws = await websockets.connect(
-                    url,
-                    additional_headers=headers,
-                    ping_interval=20,
-                    ping_timeout=10,
-                )
-
-                # Send initial config (BOS - beginning of stream)
-                await self.ws.send(json.dumps({
-                    "text": " ",
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.8,
-                        "style": 0.3,
-                        "use_speaker_boost": True,
-                    },
-                    "generation_config": {
-                        "chunk_length_schedule": [120, 160, 250, 290],
-                    },
-                    "xi_api_key": self._api_key,
-                }))
-
+                await self._new_connection()
                 self._connected = True
                 self._log("Connected to ElevenLabs TTS")
                 self._listen_task = asyncio.create_task(self._listen())
                 return
             except Exception as e:
                 if attempt < self.MAX_CONNECT_RETRIES - 1:
-                    self._log(f"Connect failed (attempt {attempt + 1}/{self.MAX_CONNECT_RETRIES}), retrying in 1s: {e}")
+                    self._log(f"Connect failed (attempt {attempt + 1}), retrying: {e}")
                     await asyncio.sleep(1)
                 else:
                     self._log(f"Connect FAILED after {self.MAX_CONNECT_RETRIES} attempts: {e}")
                     self._connected = False
 
     async def speak(self, text: str):
-        """Convert text to speech. Reconnects each time as ElevenLabs uses one stream per generation."""
-        # Always reconnect for fresh stream
-        if self._connected and self.ws:
-            try:
-                await self.ws.close()
-            except Exception:
-                pass
-            self._connected = False
-
-        await self.connect()
-        if not self._connected:
-            self._log("Connect failed, cannot speak")
-            return
+        """Convert text to speech."""
+        # Reconnect if not connected (ElevenLabs closes after EOS)
+        if not self._connected or not self.ws:
+            await self.connect()
+            if not self._connected:
+                self._log("Connect failed, cannot speak")
+                return
 
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
 
         try:
-            # Send text with flush
+            # Send text with flush to trigger generation
             await self.ws.send(json.dumps({
                 "text": text + " ",
                 "flush": True,
             }))
         except websockets.exceptions.ConnectionClosed:
-            self._log("Connection closed during speak, reconnecting...")
+            self._log("Connection closed, reconnecting...")
             self._connected = False
             self._speaking = False
             await self.connect()
@@ -132,24 +129,28 @@ class ElevenLabsTTS:
         """Listen for audio chunks from ElevenLabs."""
         try:
             async for message in self.ws:
-                data = json.loads(message)
+                try:
+                    data = json.loads(message)
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
                 if data.get("audio"):
-                    # ElevenLabs sends base64-encoded ulaw audio
-                    # Convert ulaw → linear16 (PCM) for Exotel
                     audio_b64 = data["audio"]
                     if audio_b64 and self._speaking:
+                        # Convert ulaw → linear16 (PCM) for Exotel
                         ulaw_bytes = base64.b64decode(audio_b64)
                         pcm_bytes = audioop.ulaw2lin(ulaw_bytes, 2)
                         pcm_b64 = base64.b64encode(pcm_bytes).decode("ascii")
                         await self.on_audio(pcm_b64)
 
-                if data.get("isFinal") or (data.get("normalizedAlignment") and not data.get("audio")):
+                if data.get("isFinal"):
                     if self._speaking:
                         self._speaking = False
                         self._log("Finished speaking")
                         if self.on_done:
                             await self.on_done()
+                    # ElevenLabs closes connection after final — mark as disconnected
+                    self._connected = False
 
                 if data.get("error"):
                     self._log(f"Error: {data['error']}")
@@ -169,7 +170,7 @@ class ElevenLabsTTS:
             self._listen_task.cancel()
         if self.ws:
             try:
-                # Send EOS (end of stream)
+                # Send EOS
                 await self.ws.send(json.dumps({"text": ""}))
             except Exception:
                 pass
