@@ -74,10 +74,9 @@ class ElevenLabsTTS:
                         if not self._speaking:
                             break
                         if chunk:
-                            # Convert ulaw → linear16 PCM for Exotel
-                            pcm_bytes = audioop.ulaw2lin(chunk, 2)
-                            pcm_b64 = base64.b64encode(pcm_bytes).decode("ascii")
-                            await self.on_audio(pcm_b64)
+                            # Send ulaw audio as base64 directly to Exotel
+                            audio_b64 = base64.b64encode(chunk).decode("ascii")
+                            await self.on_audio(audio_b64)
 
             if self._speaking:
                 self._speaking = False
