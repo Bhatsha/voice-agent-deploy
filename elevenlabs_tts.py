@@ -88,7 +88,10 @@ class ElevenLabsTTS:
                     return
 
                 pcm_16k = resp.content
-                self._log(f"Got {len(pcm_16k)} bytes of PCM 16kHz audio")
+                content_type = resp.headers.get("content-type", "unknown")
+                # Log first 20 bytes hex to verify format
+                hex_preview = pcm_16k[:20].hex() if pcm_16k else "empty"
+                self._log(f"Got {len(pcm_16k)} bytes | content-type={content_type} | hex={hex_preview}")
 
             if not self._speaking or not pcm_16k:
                 return
