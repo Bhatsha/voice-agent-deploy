@@ -2,6 +2,7 @@ import asyncio
 import audioop
 import base64
 import logging
+import struct
 from typing import Callable, Optional
 
 import httpx
@@ -52,7 +53,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "ulaw_8000",
+            "output_format": "pcm_16000",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -74,8 +75,10 @@ class ElevenLabsTTS:
                         if not self._speaking:
                             break
                         if chunk:
-                            # Send ulaw audio as base64 directly to Exotel
-                            audio_b64 = base64.b64encode(chunk).decode("ascii")
+                            # ElevenLabs sends PCM 16-bit 16kHz
+                            # Downsample 16kHz → 8kHz for Exotel (linear16 8kHz)
+                            pcm_8k = audioop.ratecv(chunk, 2, 1, 16000, 8000, None)[0]
+                            audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
                             await self.on_audio(audio_b64)
 
             if self._speaking:
