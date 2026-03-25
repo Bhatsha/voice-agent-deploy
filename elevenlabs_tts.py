@@ -2,7 +2,6 @@ import asyncio
 import audioop
 import base64
 import logging
-import struct
 from typing import Callable, Optional
 
 import httpx
@@ -24,7 +23,6 @@ class ElevenLabsTTS:
         self._voice_id = config.ELEVENLABS_VOICE_ID
         self._speaking = False
         self._connected = False
-        self._speak_task: Optional[asyncio.Task] = None
 
     def _log(self, msg):
         logger.info(msg)
@@ -36,7 +34,6 @@ class ElevenLabsTTS:
         return self._speaking
 
     async def connect(self):
-        """Mark as ready (HTTP doesn't need persistent connection)."""
         self._connected = True
         self._log("ElevenLabs TTS ready (HTTP mode)")
 
@@ -45,6 +42,7 @@ class ElevenLabsTTS:
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
 
+        # Use pcm_16000: raw PCM 16-bit signed little-endian at 16kHz
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream"
         headers = {
             "xi-api-key": self._api_key,
@@ -53,7 +51,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "pcm_22050",
+            "output_format": "pcm_16000",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.8,
@@ -63,6 +61,8 @@ class ElevenLabsTTS:
         }
 
         try:
+            leftover = b""
+            state = None
             async with httpx.AsyncClient(timeout=30) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
@@ -71,25 +71,29 @@ class ElevenLabsTTS:
                         self._speaking = False
                         return
 
-                    leftover = b""
-                    async for chunk in resp.aiter_bytes(chunk_size=4096):
+                    async for chunk in resp.aiter_bytes(chunk_size=3200):
                         if not self._speaking:
                             break
-                        if chunk:
-                            # Prepend any leftover bytes from previous chunk
-                            raw = leftover + chunk
-                            # Ensure even number of bytes (16-bit PCM = 2 bytes per sample)
-                            if len(raw) % 2 != 0:
-                                leftover = raw[-1:]
-                                raw = raw[:-1]
-                            else:
-                                leftover = b""
-                            if not raw:
-                                continue
-                            # Downsample 22050Hz → 8000Hz for Exotel
-                            pcm_8k = audioop.ratecv(raw, 2, 1, 22050, 8000, None)[0]
-                            audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
-                            await self.on_audio(audio_b64)
+                        if not chunk:
+                            continue
+
+                        # Combine with leftover
+                        raw = leftover + chunk
+
+                        # Ensure even byte count for 16-bit PCM
+                        if len(raw) % 2 != 0:
+                            leftover = raw[-1:]
+                            raw = raw[:-1]
+                        else:
+                            leftover = b""
+
+                        if len(raw) < 2:
+                            continue
+
+                        # Downsample 16kHz → 8kHz (matches Exotel linear16 8kHz)
+                        pcm_8k, state = audioop.ratecv(raw, 2, 1, 16000, 8000, state)
+                        audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
+                        await self.on_audio(audio_b64)
 
             if self._speaking:
                 self._speaking = False
