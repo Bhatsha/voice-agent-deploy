@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import struct
+import time
 from typing import Callable, Optional
 
 import httpx
@@ -9,6 +10,12 @@ import httpx
 import config
 
 logger = logging.getLogger(__name__)
+
+# At 8kHz 16-bit mono: 16000 bytes per second
+BYTES_PER_SECOND_8K = 16000
+# Send chunks of ~20ms worth of audio
+CHUNK_DURATION_MS = 20
+CHUNK_BYTES = int(BYTES_PER_SECOND_8K * CHUNK_DURATION_MS / 1000)  # 320 bytes per chunk
 
 
 class ElevenLabsTTS:
@@ -38,7 +45,7 @@ class ElevenLabsTTS:
         self._log("ElevenLabs TTS ready (HTTP mode)")
 
     async def speak(self, text: str):
-        """Convert text to speech via HTTP streaming."""
+        """Convert text to speech via HTTP streaming with real-time pacing."""
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
 
@@ -60,7 +67,8 @@ class ElevenLabsTTS:
         }
 
         try:
-            leftover = b""
+            # Collect all PCM 16kHz audio first
+            pcm_16k = b""
             async with httpx.AsyncClient(timeout=30) as client:
                 async with client.stream("POST", url, json=payload, headers=headers) as resp:
                     if resp.status_code != 200:
@@ -69,33 +77,42 @@ class ElevenLabsTTS:
                         self._speaking = False
                         return
 
-                    async for chunk in resp.aiter_bytes(chunk_size=3200):
+                    async for chunk in resp.aiter_bytes():
                         if not self._speaking:
                             break
-                        if not chunk:
-                            continue
+                        pcm_16k += chunk
 
-                        raw = leftover + chunk
+            if not self._speaking:
+                return
 
-                        # Need multiple of 4 bytes (2 samples × 2 bytes) for 2:1 downsample
-                        remainder = len(raw) % 4
-                        if remainder:
-                            leftover = raw[-remainder:]
-                            raw = raw[:-remainder]
-                        else:
-                            leftover = b""
+            # Ensure even byte count
+            if len(pcm_16k) % 2 != 0:
+                pcm_16k = pcm_16k[:-1]
 
-                        if len(raw) < 4:
-                            continue
+            # Downsample 16kHz → 8kHz: take every other sample
+            num_samples = len(pcm_16k) // 2
+            samples = struct.unpack(f"<{num_samples}h", pcm_16k)
+            downsampled = samples[::2]
+            pcm_8k = struct.pack(f"<{len(downsampled)}h", *downsampled)
 
-                        # Downsample 16kHz → 8kHz: take every other 16-bit sample
-                        num_samples = len(raw) // 2
-                        samples = struct.unpack(f"<{num_samples}h", raw)
-                        downsampled = samples[::2]
-                        pcm_8k = struct.pack(f"<{len(downsampled)}h", *downsampled)
+            # Send audio in real-time paced chunks
+            start_time = time.monotonic()
+            bytes_sent = 0
 
-                        audio_b64 = base64.b64encode(pcm_8k).decode("ascii")
-                        await self.on_audio(audio_b64)
+            for i in range(0, len(pcm_8k), CHUNK_BYTES):
+                if not self._speaking:
+                    break
+
+                chunk = pcm_8k[i:i + CHUNK_BYTES]
+                audio_b64 = base64.b64encode(chunk).decode("ascii")
+                await self.on_audio(audio_b64)
+                bytes_sent += len(chunk)
+
+                # Pace: wait until real-time catches up
+                expected_time = bytes_sent / BYTES_PER_SECOND_8K
+                elapsed = time.monotonic() - start_time
+                if expected_time > elapsed:
+                    await asyncio.sleep(expected_time - elapsed)
 
             if self._speaking:
                 self._speaking = False
