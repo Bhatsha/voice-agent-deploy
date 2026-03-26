@@ -4,3 +4,4 @@ websockets==14.1
 httpx==0.28.1
 python-dotenv==1.0.1
 google-cloud-firestore==2.19.0
+pydub==0.25.1
