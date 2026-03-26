@@ -1,12 +1,10 @@
 import asyncio
 import base64
-import io
 import logging
 import time
 from typing import Callable, Optional
 
 import httpx
-from pydub import AudioSegment
 
 import config
 
@@ -20,7 +18,7 @@ CHUNK_BYTES = int(BYTES_PER_SECOND * CHUNK_DURATION_MS / 1000)  # 320 bytes
 
 
 class ElevenLabsTTS:
-    """Text-to-Speech client for ElevenLabs."""
+    """Text-to-Speech client for ElevenLabs with real-time ffmpeg streaming."""
 
     def __init__(self, on_audio: Callable, on_log: Callable = None, on_done: Callable = None,
                  codec: str = None, sample_rate: int = None, api_key: str = None):
@@ -32,6 +30,7 @@ class ElevenLabsTTS:
         self._speaking = False
         self._connected = False
         self._playback_task: Optional[asyncio.Task] = None
+        self._ffmpeg_proc: Optional[asyncio.subprocess.Process] = None
 
     def _log(self, msg):
         logger.info(msg)
@@ -44,12 +43,13 @@ class ElevenLabsTTS:
 
     async def connect(self):
         self._connected = True
-        self._log("ElevenLabs TTS ready")
+        self._log("ElevenLabs TTS ready (streaming mode)")
 
     async def speak(self, text: str):
-        """Start TTS — returns immediately, audio plays in background."""
+        """Start TTS — returns immediately, audio streams in background."""
         if self._playback_task and not self._playback_task.done():
             self._speaking = False
+            await self._kill_ffmpeg()
             self._playback_task.cancel()
             try:
                 await self._playback_task
@@ -58,11 +58,21 @@ class ElevenLabsTTS:
 
         self._speaking = True
         self._log(f"Speaking: {text[:60]}...")
-        self._playback_task = asyncio.create_task(self._generate_and_play(text))
+        self._playback_task = asyncio.create_task(self._stream_and_play(text))
 
-    async def _generate_and_play(self, text: str):
-        """Fetch MP3 from ElevenLabs, convert to PCM 8kHz, and play."""
-        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
+    async def _kill_ffmpeg(self):
+        """Kill any running ffmpeg process."""
+        if self._ffmpeg_proc and self._ffmpeg_proc.returncode is None:
+            try:
+                self._ffmpeg_proc.kill()
+                await self._ffmpeg_proc.wait()
+            except Exception:
+                pass
+            self._ffmpeg_proc = None
+
+    async def _stream_and_play(self, text: str):
+        """Stream MP3 from ElevenLabs → ffmpeg → PCM 8kHz → Exotel."""
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}/stream"
         headers = {
             "xi-api-key": self._api_key,
             "Content-Type": "application/json",
@@ -72,54 +82,59 @@ class ElevenLabsTTS:
             "model_id": config.ELEVENLABS_MODEL,
             "output_format": "mp3_44100_128",
             "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.8,
-                "style": 0.3,
+                "stability": 0.3,
+                "similarity_boost": 0.75,
+                "style": 0.7,
                 "use_speaker_boost": True,
             },
         }
 
         try:
+            # Start ffmpeg: MP3 stdin → linear16 PCM 8kHz stdout
+            self._ffmpeg_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-i", "pipe:0",
+                "-f", "s16le", "-ar", "8000", "-ac", "1",
+                "-loglevel", "error",
+                "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            # Start reading PCM from ffmpeg stdout in parallel
+            reader_task = asyncio.create_task(self._read_and_send_pcm())
+
+            # Stream MP3 from ElevenLabs → ffmpeg stdin
             async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+                async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        error_text = await resp.aread()
+                        self._log(f"HTTP error {resp.status_code}: {error_text[:200]}")
+                        self._speaking = False
+                        await self._kill_ffmpeg()
+                        reader_task.cancel()
+                        return
 
-                if resp.status_code != 200:
-                    self._log(f"HTTP error {resp.status_code}: {resp.text[:200]}")
-                    self._speaking = False
-                    return
+                    async for chunk in resp.aiter_bytes(chunk_size=4096):
+                        if not self._speaking:
+                            break
+                        if chunk and self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                            try:
+                                self._ffmpeg_proc.stdin.write(chunk)
+                                await self._ffmpeg_proc.stdin.drain()
+                            except (BrokenPipeError, ConnectionResetError):
+                                break
 
-                mp3_data = resp.content
-                self._log(f"Got {len(mp3_data)} bytes of MP3 audio")
+            # Close ffmpeg stdin to signal EOF
+            if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                try:
+                    self._ffmpeg_proc.stdin.close()
+                    await self._ffmpeg_proc.stdin.wait_closed()
+                except Exception:
+                    pass
 
-            if not self._speaking or not mp3_data:
-                return
-
-            # Convert MP3 → linear16 PCM 8kHz mono (what Exotel expects)
-            audio = AudioSegment.from_mp3(io.BytesIO(mp3_data))
-            audio = audio.set_frame_rate(8000).set_channels(1).set_sample_width(2)
-            pcm_8k = audio.raw_data
-
-            self._log(f"Converted to {len(pcm_8k)} bytes of PCM 8kHz ({len(pcm_8k)/BYTES_PER_SECOND:.1f}s)")
-
-            # Play audio in real-time paced chunks
-            start_time = time.monotonic()
-            bytes_sent = 0
-
-            for i in range(0, len(pcm_8k), CHUNK_BYTES):
-                if not self._speaking:
-                    break
-
-                chunk = pcm_8k[i:i + CHUNK_BYTES]
-                audio_b64 = base64.b64encode(chunk).decode("ascii")
-                await self.on_audio(audio_b64)
-                bytes_sent += len(chunk)
-
-                # Pace to real-time
-                expected_time = bytes_sent / BYTES_PER_SECOND
-                elapsed = time.monotonic() - start_time
-                delay = expected_time - elapsed
-                if delay > 0:
-                    await asyncio.sleep(delay)
+            # Wait for reader to finish sending all PCM
+            await reader_task
 
             if self._speaking:
                 self._speaking = False
@@ -129,18 +144,66 @@ class ElevenLabsTTS:
 
         except asyncio.CancelledError:
             self._speaking = False
+            await self._kill_ffmpeg()
         except Exception as e:
             self._log(f"Speak error: {e}")
             self._speaking = False
+            await self._kill_ffmpeg()
+
+    async def _read_and_send_pcm(self):
+        """Read PCM from ffmpeg stdout and send to Exotel with pacing."""
+        start_time = None
+        bytes_sent = 0
+        buffer = b""
+
+        try:
+            while self._speaking and self._ffmpeg_proc and self._ffmpeg_proc.stdout:
+                chunk = await self._ffmpeg_proc.stdout.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+
+                buffer += chunk
+
+                while len(buffer) >= CHUNK_BYTES and self._speaking:
+                    pcm_chunk = buffer[:CHUNK_BYTES]
+                    buffer = buffer[CHUNK_BYTES:]
+
+                    audio_b64 = base64.b64encode(pcm_chunk).decode("ascii")
+                    await self.on_audio(audio_b64)
+                    bytes_sent += len(pcm_chunk)
+
+                    # Start pacing timer from first chunk
+                    if start_time is None:
+                        start_time = time.monotonic()
+                        continue
+
+                    # Pace to real-time
+                    expected_time = bytes_sent / BYTES_PER_SECOND
+                    elapsed = time.monotonic() - start_time
+                    delay = expected_time - elapsed
+                    if delay > 0.005:
+                        await asyncio.sleep(delay)
+
+            # Send remaining buffer
+            if buffer and self._speaking:
+                audio_b64 = base64.b64encode(buffer).decode("ascii")
+                await self.on_audio(audio_b64)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self._log(f"PCM reader error: {e}")
 
     async def stop(self):
         self._speaking = False
+        await self._kill_ffmpeg()
         if self._playback_task and not self._playback_task.done():
             self._playback_task.cancel()
 
     async def close(self):
         self._speaking = False
         self._connected = False
+        await self._kill_ffmpeg()
         if self._playback_task and not self._playback_task.done():
             self._playback_task.cancel()
         logger.info("ElevenLabs TTS closed")

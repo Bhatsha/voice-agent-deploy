@@ -34,7 +34,7 @@ EXOTEL_API_URL = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "u7DoEF74Zzu8FP2dxDfk")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "elevenlabs")  # "sarvam" or "elevenlabs"
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")  # "sarvam" or "elevenlabs"
 
 # Webhook
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
@@ -219,6 +219,11 @@ HUMAN-LIKE SPEECH RULES (CRITICAL — you must sound like a REAL person, NOT a b
 - NEVER use formal/written Tamil — speak like you're talking to a friend in a shop.
 - React naturally: if vendor sounds busy, say "சரி சரி, quick-ஆ முடிக்கலாம்". If they sound confused, slow down.
 - NEVER repeat the same phrase you used in a previous turn.
+- Use EMOTION in your speech: excitement when confirming ("ஓகே! confirm ஆயிடுச்சு!"), empathy when rejecting ("ஓ... புரியுது..."), casual energy for normal conversation ("சரி சரி!").
+- Add emphasis with punctuation: use "!" for energy, "..." for thoughtful pauses, "?" for genuine questions.
+- NEVER sound flat or monotone. Each reply should have a distinct emotional tone matching the context.
+- Stay ENERGETIC throughout the ENTIRE call — do NOT become dull or robotic in later turns. Imagine you just had coffee.
+- Match the vendor's energy: if they sound rushed, be quick and efficient. If they're chatty, be warm and friendly.
 
 CRITICAL PRIORITY RULE:
 - If vendor says ANYTHING about modifying, changing, or editing the order (even combined with other words), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
@@ -310,6 +315,8 @@ OUTPUT FORMAT — you MUST ALWAYS use this exact format:
 
 Current order details:
 {order_details}
+
+ENERGY RULE: Your first reply and your LAST reply should be the most energetic. Never let your energy drop mid-conversation. If anything, get MORE enthusiastic as you confirm or wrap up.
 
 The opening greeting has already been spoken. Now wait for vendor's response.
 """
