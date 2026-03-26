@@ -132,28 +132,30 @@ class VoiceAgent:
         is_real_call = not self.call_sid.startswith("test-")
         use_elevenlabs = config.TTS_PROVIDER == "elevenlabs" and config.ELEVENLABS_API_KEY
 
+        # Sarvam TTS for fast greeting (WebSocket = instant)
+        self._sarvam_tts = SarvamTTS(
+            on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
+            codec=config.TTS_CODEC_TELEPHONY if is_real_call else config.TTS_CODEC,
+            sample_rate=config.TTS_SAMPLE_RATE_TELEPHONY if is_real_call else config.TTS_SAMPLE_RATE,
+            api_key=self._api_key,
+        )
+
+        # Main TTS for conversation (ElevenLabs or Sarvam)
         if use_elevenlabs:
             self.tts = ElevenLabsTTS(
                 on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
                 sample_rate=config.TTS_SAMPLE_RATE_TELEPHONY if is_real_call else config.TTS_SAMPLE_RATE,
             )
-        elif is_real_call:
-            self.tts = SarvamTTS(
-                on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
-                codec=config.TTS_CODEC_TELEPHONY, sample_rate=config.TTS_SAMPLE_RATE_TELEPHONY,
-                api_key=self._api_key,
-            )
         else:
-            self.tts = SarvamTTS(
-                on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
-                api_key=self._api_key,
-            )
+            self.tts = self._sarvam_tts  # use same instance
 
         await self.stt.connect()
-        await self.tts.connect()
+        await self._sarvam_tts.connect()
+        if use_elevenlabs:
+            await self.tts.connect()
 
         # Graceful failure: if both STT and TTS failed to connect, end call immediately
-        if not self.stt._connected and not self.tts._connected:
+        if not self.stt._connected and not self._sarvam_tts._connected:
             await self._send_log("FATAL: Both STT and TTS failed to connect — ending call")
             await self._send_webhook("NO_RESPONSE")
             self._call_ended = True
@@ -162,13 +164,12 @@ class VoiceAgent:
 
         await self._send_log(f"Agent ready for call {self.call_sid}")
 
-        # Brief pause then speak intro (combined "ஹலோ" + intro in one TTS call)
-        await asyncio.sleep(0.5)
+        # Use Sarvam for fast greeting (no HTTP round-trip delay)
         intro = config.build_greeting_intro(self.order_data)
         full_intro = f"ஹலோ... {intro}"
         self._last_agent_text = full_intro
         self._greeting_phase = 1
-        await self._speak(full_intro)
+        await self._sarvam_tts.speak(full_intro)
 
         # Wait for TTS to finish generating the intro
         while self.tts and self.tts.is_speaking:
@@ -184,10 +185,10 @@ class VoiceAgent:
 
         self._greeting_phase = 0
 
-        # Phase 2: Read order items + total + "okay?"
+        # Phase 2: Read order items + total + "okay?" (also use Sarvam for speed)
         items_greeting = config.build_greeting_items(self.order_data)
         self._last_agent_text = items_greeting
-        await self._speak(items_greeting)
+        await self._sarvam_tts.speak(items_greeting)
         # Silence timeout will start when TTS finishes (in _on_tts_done)
 
         # Fallback: if _on_tts_done never fires (TTS broken), start silence timeout after 15s
@@ -799,6 +800,8 @@ class VoiceAgent:
             await self.stt.close()
         if self.tts:
             await self.tts.close()
+        if hasattr(self, '_sarvam_tts') and self._sarvam_tts and self._sarvam_tts != self.tts:
+            await self._sarvam_tts.close()
         if self.llm:
             await self.llm.close()
         self._release_key()
