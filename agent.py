@@ -354,16 +354,21 @@ class VoiceAgent:
             logger.info(f"STATUS: parsed='{status}' terminal={terminal} pending={self._confirmation_pending} is_question={self._speak_is_question(speak_text)}")
 
             if terminal:
+                # MODIFIED always ends immediately — no confirmation needed (redirect to customer care)
+                if terminal == "MODIFIED":
+                    reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
+                    self._modification_reason = reason
+                    logger.info(f"CALL END: MODIFIED — ending call directly")
+                    await self._send_webhook(terminal)
+                    await self._finish_call(terminal)
+                    return
+
                 if self._confirmation_pending == terminal:
                     # User confirmed — agent already asked, now end the call
                     if terminal == "REJECTED":
                         new_reason = self._extract_reason_from_status(status) or text.strip()
                         if new_reason and new_reason not in self._rejection_reason:
                             self._rejection_reason = (self._rejection_reason + " | " + new_reason) if self._rejection_reason else new_reason
-                    elif terminal == "MODIFIED":
-                        new_reason = self._extract_reason_from_status(status) or text.strip()
-                        if new_reason and new_reason not in self._modification_reason:
-                            self._modification_reason = (self._modification_reason + " | " + new_reason) if self._modification_reason else new_reason
                     logger.info(f"CALL END: User confirmed {terminal}")
                     await self._send_log(f"User confirmed {terminal} — ending call")
                     await self._send_webhook(terminal)
@@ -376,10 +381,6 @@ class VoiceAgent:
                         reason = self._extract_reason_from_status(status)
                         if reason:
                             self._rejection_reason = reason
-                    elif terminal == "MODIFIED":
-                        reason = self._extract_reason_from_status(status)
-                        if reason:
-                            self._modification_reason = reason
                     logger.info(f"CONFIRMATION SET: pending={terminal}")
                     await self._send_log(f"Confirmation pending for {terminal} — waiting for user YES")
                 else:
@@ -447,7 +448,7 @@ class VoiceAgent:
         # Agent says order is confirmed/accepted + thanks/bye
         accept_phrases = ["confirm பண்ணிட்டேன்", "போட்டுட்டேன்", "confirm ஆயிடுச்சு", "accept ஆயிடுச்சு"]
         reject_phrases = ["reject பண்ணிட்டேன்", "noted", "புரிஞ்சது"]
-        modify_phrases = ["modify request போட்டுட்டேன்", "forward பண்ணிட்டேன்", "request போட்டுட்டேன்"]
+        modify_phrases = ["modify request போட்டுட்டேன்", "forward பண்ணிட்டேன்", "request போட்டுட்டேன்", "customer care", "customer care-ஐ contact"]
 
         for phrase in modify_phrases:
             if phrase in lower:

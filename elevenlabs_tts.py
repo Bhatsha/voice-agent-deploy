@@ -31,6 +31,7 @@ class ElevenLabsTTS:
         self._connected = False
         self._playback_task: Optional[asyncio.Task] = None
         self._ffmpeg_proc: Optional[asyncio.subprocess.Process] = None
+        self._http_client: Optional[httpx.AsyncClient] = None
 
     def _log(self, msg):
         logger.info(msg)
@@ -43,6 +44,7 @@ class ElevenLabsTTS:
 
     async def connect(self):
         self._connected = True
+        self._http_client = httpx.AsyncClient(timeout=30)
         self._log("ElevenLabs TTS ready (streaming mode)")
 
     async def speak(self, text: str):
@@ -105,25 +107,25 @@ class ElevenLabsTTS:
             reader_task = asyncio.create_task(self._read_and_send_pcm())
 
             # Stream MP3 from ElevenLabs → ffmpeg stdin
-            async with httpx.AsyncClient(timeout=30) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        error_text = await resp.aread()
-                        self._log(f"HTTP error {resp.status_code}: {error_text[:200]}")
-                        self._speaking = False
-                        await self._kill_ffmpeg()
-                        reader_task.cancel()
-                        return
+            client = self._http_client or httpx.AsyncClient(timeout=30)
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    error_text = await resp.aread()
+                    self._log(f"HTTP error {resp.status_code}: {error_text[:200]}")
+                    self._speaking = False
+                    await self._kill_ffmpeg()
+                    reader_task.cancel()
+                    return
 
-                    async for chunk in resp.aiter_bytes(chunk_size=4096):
-                        if not self._speaking:
+                async for chunk in resp.aiter_bytes(chunk_size=4096):
+                    if not self._speaking:
+                        break
+                    if chunk and self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                        try:
+                            self._ffmpeg_proc.stdin.write(chunk)
+                            await self._ffmpeg_proc.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError):
                             break
-                        if chunk and self._ffmpeg_proc and self._ffmpeg_proc.stdin:
-                            try:
-                                self._ffmpeg_proc.stdin.write(chunk)
-                                await self._ffmpeg_proc.stdin.drain()
-                            except (BrokenPipeError, ConnectionResetError):
-                                break
 
             # Close ffmpeg stdin to signal EOF
             if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
@@ -206,4 +208,7 @@ class ElevenLabsTTS:
         await self._kill_ffmpeg()
         if self._playback_task and not self._playback_task.done():
             self._playback_task.cancel()
+        if self._http_client:
+            await self._http_client.aclose()
+            self._http_client = None
         logger.info("ElevenLabs TTS closed")
