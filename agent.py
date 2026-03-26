@@ -21,7 +21,7 @@ class VoiceAgent:
     """Orchestrates a single call session: Exotel <-> STT <-> LLM <-> TTS."""
 
     ECHO_BUFFER_MS = 500
-    FLUSH_AFTER_MS = 2000
+    FLUSH_AFTER_MS = 1200
     ECHO_WORD_OVERLAP_THRESHOLD = 0.5
     ECHO_MIN_WORDS = 4
 
@@ -162,16 +162,13 @@ class VoiceAgent:
 
         await self._send_log(f"Agent ready for call {self.call_sid}")
 
-        # Wait 2 seconds before speaking, then say hello first
-        await asyncio.sleep(2)
-        await self._speak("ஹலோ")
-        await asyncio.sleep(1)
-
-        # Phase 1: Short intro (name + company + "new order")
+        # Brief pause then speak intro (combined "ஹலோ" + intro in one TTS call)
+        await asyncio.sleep(0.5)
         intro = config.build_greeting_intro(self.order_data)
-        self._last_agent_text = intro
+        full_intro = f"ஹலோ... {intro}"
+        self._last_agent_text = full_intro
         self._greeting_phase = 1
-        await self._speak(intro)
+        await self._speak(full_intro)
 
         # Wait for TTS to finish generating the intro
         while self.tts and self.tts.is_speaking:
