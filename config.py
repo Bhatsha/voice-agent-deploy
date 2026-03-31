@@ -188,7 +188,7 @@ def build_system_prompt(order: dict) -> str:
     items_with_price = _build_items_with_price(order)
     total = _calc_total(order)
     total_word = _qty_word(total)
-    rupees_word = "ரூபாய்"
+    rupees_word = "ரூபாய்"  # Always Tamil — never RS/rupees/rupee
     use_roman = _use_elevenlabs()
 
     roman_rule = ""
@@ -248,6 +248,7 @@ HUMAN-LIKE SPEECH RULES (CRITICAL):
 - NEVER use formal Tamil. Speak like talking to a friend.
 - Use EMOTION: excitement "ஓகே! ஆயிடுச்சு!", empathy "ஓ... புரியுது...", casual "சரி சரி!"
 - Stay ENERGETIC throughout. NEVER become dull.
+- When saying price/amount, ALWAYS say "ரூபாய்" — NEVER say "RS", "rupees", "rupee", or "₹". Example: "890 ரூபாய்".
 
 CRITICAL PRIORITY RULE:
 - If vendor says ANYTHING about modifying, changing, or editing the order (even combined with other words), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
