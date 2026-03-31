@@ -61,7 +61,7 @@ NUM_TO_TAMIL = {
     6: "ஆறு", 7: "ஏழு", 8: "எட்டு", 9: "ஒன்பது", 10: "பத்து",
 }
 
-# Spoken Tamil number words
+# Spoken Tamil number words (Tamil script — for Sarvam TTS)
 _UNITS = {1: "ஒன்னு", 2: "ரெண்டு", 3: "மூணு", 4: "நாலு", 5: "அஞ்சு",
           6: "ஆறு", 7: "ஏழு", 8: "எட்டு", 9: "ஒன்பது"}
 _TENS = {10: "பத்து", 20: "இருபது", 30: "முப்பது", 40: "நாப்பது",
@@ -73,6 +73,19 @@ _HUNDREDS_COMBINE = {1: "நூத்தி", 2: "இருநூத்தி", 
                      9: "தொள்ளாயிரத்து"}
 _THOUSANDS_PREFIX = {1: "", 2: "ரெண்டு ", 3: "மூணு ", 4: "நாலு ", 5: "அஞ்சு ",
                      6: "ஆறு ", 7: "ஏழு ", 8: "எட்டு ", 9: "ஒன்பது "}
+
+# Romanized Tamil number words (for ElevenLabs TTS)
+_UNITS_ROMAN = {1: "onnu", 2: "rendu", 3: "moonu", 4: "naalu", 5: "anju",
+                6: "aaru", 7: "yezhu", 8: "ettu", 9: "ombadhu"}
+_TENS_ROMAN = {10: "pathu", 20: "irubadhu", 30: "muppadhu", 40: "naarppadhu",
+               50: "aimbadhu", 60: "arubadhu", 70: "ezhubadhu", 80: "enbadhu", 90: "thonnuru"}
+_HUNDREDS_ROMAN = {1: "nooru", 2: "irunooru", 3: "munnooru", 4: "naanooru",
+                   5: "ainooru", 6: "arunooru", 7: "ezhunooru", 8: "ennooru", 9: "thollayiram"}
+_HUNDREDS_COMBINE_ROMAN = {1: "noothi", 2: "irunoothi", 3: "munnoothi", 4: "naanoothi",
+                           5: "ainoothi", 6: "arunoothi", 7: "ezhunoothi", 8: "ennoothi",
+                           9: "thollayiraththu"}
+_THOUSANDS_PREFIX_ROMAN = {1: "", 2: "rendu ", 3: "moonu ", 4: "naalu ", 5: "anju ",
+                           6: "aaru ", 7: "yezhu ", 8: "ettu ", 9: "ombadhu "}
 
 
 def amount_to_tamil(n: int) -> str:
@@ -111,18 +124,58 @@ def amount_to_tamil(n: int) -> str:
     return " ".join(parts)
 
 
+def amount_to_tamil_roman(n: int) -> str:
+    """Convert numeric amount to romanized spoken Tamil words"""
+    n = int(n)
+    if n == 0:
+        return "poojyam"
+    parts = []
+    if n >= 1000:
+        t = n // 1000
+        n %= 1000
+        prefix = _THOUSANDS_PREFIX_ROMAN.get(t, f"{t} ")
+        if n > 0:
+            parts.append(f"{prefix}aayiraththu")
+        else:
+            parts.append(f"{prefix}aayiram")
+    if n >= 100:
+        h = n // 100
+        n %= 100
+        if n > 0:
+            parts.append(_HUNDREDS_COMBINE_ROMAN.get(h, f"{h} nootru"))
+        else:
+            parts.append(_HUNDREDS_ROMAN.get(h, f"{h} nooru"))
+    if n >= 10:
+        t = (n // 10) * 10
+        u = n % 10
+        if u > 0:
+            parts.append(f"{_TENS_ROMAN[t]} {_UNITS_ROMAN[u]}")
+        else:
+            parts.append(_TENS_ROMAN[t])
+    elif n > 0:
+        parts.append(_UNITS_ROMAN[n])
+    return " ".join(parts)
+
+
+def _use_elevenlabs() -> bool:
+    return TTS_PROVIDER == "elevenlabs" and ELEVENLABS_API_KEY
+
+
+def _qty_word(n: int) -> str:
+    """Return quantity in the right format based on TTS provider"""
+    return amount_to_tamil_roman(n) if _use_elevenlabs() else amount_to_tamil(n)
 
 
 def _build_items_summary(order: dict) -> str:
     """Build natural-sounding item summary for speech"""
     parts = []
     for item in order["items"]:
-        qty_tamil = amount_to_tamil(item["qty"])
+        qty_word = _qty_word(item["qty"])
         variation = item.get("variation")
         if variation:
-            parts.append(f"{item['name']} {variation} {qty_tamil}")
+            parts.append(f"{item['name']} {variation} {qty_word}")
         else:
-            parts.append(f"{item['name']} {qty_tamil}")
+            parts.append(f"{item['name']} {qty_word}")
     return " ... ".join(parts) + " ... "
 
 
@@ -130,14 +183,14 @@ def _build_items_with_price(order: dict) -> str:
     """Build item summary with individual prices for system prompt"""
     parts = []
     for item in order["items"]:
-        qty_tamil = amount_to_tamil(item["qty"])
+        qty_word = _qty_word(item["qty"])
         price = item["price"]
         total_item = price * item["qty"]
         variation = item.get("variation")
         if variation:
-            parts.append(f"{item['name']} {variation} {qty_tamil} — ₹{price} each, ₹{total_item} total")
+            parts.append(f"{item['name']} {variation} {qty_word} — ₹{price} each, ₹{total_item} total")
         else:
-            parts.append(f"{item['name']} {qty_tamil} — ₹{price} each, ₹{total_item} total")
+            parts.append(f"{item['name']} {qty_word} — ₹{price} each, ₹{total_item} total")
     return "\n    ".join(parts)
 
 
@@ -148,6 +201,13 @@ def _calc_total(order: dict) -> int:
 
 def build_greeting_intro(order: dict) -> str:
     """Short intro — name + company + 'new order'. Spoken first, then wait for vendor."""
+    if _use_elevenlabs():
+        return (
+            f"{order['vendor_name']}... "
+            f"vanakkam... "
+            f"naan {order['company_name']}-la irundhu pesuren... "
+            f"ungalukku oru pudhu order vandhirukku"
+        )
     return (
         f"{order['vendor_name']}... "
         f"வணக்கம்... "
@@ -159,6 +219,12 @@ def build_greeting_intro(order: dict) -> str:
 def build_greeting_items(order: dict) -> str:
     """Order details — items + question. Spoken after vendor acknowledges."""
     items_summary = _build_items_summary(order)
+    if _use_elevenlabs():
+        return (
+            f"Order ID {order['order_id']}... "
+            f"{items_summary} "
+            f"idhu okay-va?"
+        )
     return (
         f"Order ID {order['order_id']}... "
         f"{items_summary} "
@@ -176,13 +242,47 @@ def build_system_prompt(order: dict) -> str:
     items_summary = _build_items_summary(order)
     items_with_price = _build_items_with_price(order)
     total = _calc_total(order)
-    total_tamil = amount_to_tamil(total)
+    total_word = _qty_word(total)
+    rupees_word = "roobai" if _use_elevenlabs() else "ரூபாய்"
+    use_roman = _use_elevenlabs()
+
+    if use_roman:
+        roman_rule = "\n- CRITICAL: Write ALL Tamil words in ROMANIZED form (English letters), NOT Tamil script. Example: 'sari, order confirm pannitten. nandri!' NOT Tamil script."
+        fillers = "appo..., sari..., hmm..., okay..."
+        empathy = "puriyudha? sari... or konjam slow-a sollava?"
+        tanglish_ex = "confirm pannalama, okay-va?"
+        vary_ex = "'sari, confirm pannitten', sometimes 'okay, pottutten... nandri' or 'nalladhu, confirm aayiduchu'"
+        ack_ex = "'aa', 'hmm', 'okay', 'sari sari'"
+        q_end = "okay-va? or sariya? or sollungka?"
+        hesitate_ex = "puriyudha? marupadi sollava?"
+        busy_ex = "sari sari, quick-a mudikalam"
+        confirm_ex = "okay! confirm aayiduchu!"
+        reject_ex = "oh... puriyudhu..."
+        casual_ex = "sari sari!"
+        modify_resp = "sari, order-la yedhaavadhu maatram venum-na Keeggi customer care-a contact pannunga. avanga ungalukku help pannuvanga. nandri."
+        speak_fmt = "Romanized Tamil speech (English letters only) — natural and short"
+    else:
+        roman_rule = ""
+        fillers = "அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே..."
+        empathy = "புரியலையா? சரி... or கொஞ்சம் slow-ஆ சொல்லவா?"
+        tanglish_ex = "confirm பண்ணலாமா, okay-வா?"
+        vary_ex = "'சரி, confirm பண்ணிட்டேன்', sometimes 'ஓகே, போட்டுட்டேன்... நன்றி' or 'நல்லது, confirm ஆயிடுச்சு'"
+        ack_ex = "'ஆ', 'ஹ்ம்ம்', 'ஓகே', 'சரி சரி'"
+        q_end = "ஓகே-வா? or சரியா? or சொல்லுங்க?"
+        hesitate_ex = "புரியுதா? மறுபடி சொல்லவா?"
+        busy_ex = "சரி சரி, quick-ஆ முடிக்கலாம்"
+        confirm_ex = "ஓகே! confirm ஆயிடுச்சு!"
+        reject_ex = "ஓ... புரியுது..."
+        casual_ex = "சரி சரி!"
+        modify_resp = "சரி, ஆர்டர்-ல ஏதாவது மாற்றம் வேணும்-னா Keeggi customer care-ஐ contact பண்ணுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க. நன்றி."
+        speak_fmt = "Tamil speech text only — natural and short"
+
     order_details = (
         f"- Order ID: {order['order_id']}\n"
         f"- Vendor: {order['vendor_name']}\n"
         f"- Company: {order['company_name']}\n"
         f"- Items:\n    {items_with_price}\n"
-        f"- Total: ₹{total} ({total_tamil} ரூபாய்)"
+        f"- Total: ₹{total} ({total_word} {rupees_word})"
     )
 
     return f"""You are a Tamil voice agent calling restaurant vendors to confirm food orders.
@@ -194,13 +294,13 @@ Act like a real human caller: Be patient, friendly, adaptive. Imagine you're Ram
 IMPORTANT LANGUAGE RULES:
 - Speak ONLY in natural spoken Tamil (daily conversation style).
 - Do NOT use written/formal Tamil.
-- Use simple short sentences.
-- Light Tanglish is okay when natural (example: confirm பண்ணலாமா, okay-வா).
+- Use simple short sentences.{roman_rule}
+- Light Tanglish is okay when natural (example: {tanglish_ex}).
 - Sound polite, calm, professional — never robotic.
-- Use natural fillers: அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே...
+- Use natural fillers: {fillers}
 - Vary your phrasing — don't repeat exact same sentences every time.
 - NEVER speak long paragraphs.
-- Show light empathy when needed: புரியலையா? சரி... or கொஞ்சம் slow-ஆ சொல்லவா?
+- Show light empathy when needed: {empathy}
 
 ROLE:
 You are calling vendor {order['vendor_name']} to confirm a newly received food order.
@@ -211,18 +311,18 @@ CALL FLOW:
 
 HUMAN-LIKE SPEECH RULES (CRITICAL — you must sound like a REAL person, NOT a bot):
 - Keep responses SHORT — 1 to 2 sentences max. Real humans don't give speeches.
-- Vary responses EVERY time: e.g. instead of always "சரி, confirm பண்ணிட்டேன்", sometimes say "ஓகே, போட்டுட்டேன்... நன்றி" or "நல்லது, confirm ஆயிடுச்சு" or "done பண்ணிட்டேன்... thanks!"
+- Vary responses EVERY time: e.g. instead of always {vary_ex}
 - Use natural pauses: "..." for short breath, like real speech.
-- Use casual acknowledgments: "ஆ", "ஹ்ம்ம்", "ஓகே", "சரி சரி" before responding.
-- End questions casually: ஓகே-வா? or சரியா? or சொல்லுங்க?
-- If they hesitate: "புரியுதா? மறுபடி சொல்லவா?"
+- Use casual acknowledgments: {ack_ex} before responding.
+- End questions casually: {q_end}
+- If they hesitate: {hesitate_ex}
 - NEVER use formal/written Tamil — speak like you're talking to a friend in a shop.
-- React naturally: if vendor sounds busy, say "சரி சரி, quick-ஆ முடிக்கலாம்". If they sound confused, slow down.
+- React naturally: if vendor sounds busy, say "{busy_ex}". If they sound confused, slow down.
 - NEVER repeat the same phrase you used in a previous turn.
-- Use EMOTION in your speech: excitement when confirming ("ஓகே! confirm ஆயிடுச்சு!"), empathy when rejecting ("ஓ... புரியுது..."), casual energy for normal conversation ("சரி சரி!").
+- Use EMOTION in your speech: excitement when confirming ("{confirm_ex}"), empathy when rejecting ("{reject_ex}"), casual energy ("{casual_ex}").
 - Add emphasis with punctuation: use "!" for energy, "..." for thoughtful pauses, "?" for genuine questions.
 - NEVER sound flat or monotone. Each reply should have a distinct emotional tone matching the context.
-- Stay ENERGETIC throughout the ENTIRE call — do NOT become dull or robotic in later turns. Imagine you just had coffee.
+- Stay ENERGETIC throughout the ENTIRE call — do NOT become dull or robotic in later turns.
 - Match the vendor's energy: if they sound rushed, be quick and efficient. If they're chatty, be warm and friendly.
 
 CRITICAL PRIORITY RULE:
@@ -234,7 +334,7 @@ INTENT HANDLING:
 
 1. MODIFICATION — vendor says: modify, change, மாத்துங்க, மாத்தணும், change பண்ணணும், item மாத்தணும், quantity மாத்தணும், update, edit, வேற item, அளவு மாத்தணும், மாத்த முடியுமா, changes வேணும், edit பண்ணணும், correct பண்ணணும், order-ல change...
    - CRITICAL: This takes HIGHEST priority. If vendor mentions modify/change/மாத்து in ANY context, this is MODIFICATION.
-   - Respond: "சரி, ஆர்டர்-ல ஏதாவது மாற்றம் வேணும்-னா Keeggi customer care-ஐ contact பண்ணுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க. நன்றி."
+   - Respond: "{modify_resp}"
    - Set status: MODIFIED | REASON: vendor requested modification, directed to customer care
    - End call politely.
 
@@ -310,7 +410,7 @@ REASON FORMAT RULES (for REJECTED and MODIFIED status):
 
 OUTPUT FORMAT — you MUST ALWAYS use this exact format:
 
-<speak>Tamil speech text only — keep it natural and short</speak>
+<speak>{speak_fmt}</speak>
 <status>ONE of: CONFIRMING / ACCEPTED / REJECTED | REASON: [clear spoken Tamil reason] / MODIFIED | REASON: [clear spoken Tamil reason] / CALLBACK_REQUESTED / UNCLEAR_RESPONSE / WAITING_FOR_RESPONSE</status>
 
 Current order details:
