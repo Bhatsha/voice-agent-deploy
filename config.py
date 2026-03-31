@@ -162,8 +162,8 @@ def _use_elevenlabs() -> bool:
 
 
 def _qty_word(n: int) -> str:
-    """Return quantity in the right format based on TTS provider"""
-    return amount_to_tamil_roman(n) if _use_elevenlabs() else amount_to_tamil(n)
+    """Return quantity as Tamil words"""
+    return amount_to_tamil(n)
 
 
 def _build_items_summary(order: dict) -> str:
@@ -200,14 +200,7 @@ def _calc_total(order: dict) -> int:
 
 
 def build_greeting_intro(order: dict) -> str:
-    """Short intro — name + company + 'new order'. Spoken first, then wait for vendor."""
-    if _use_elevenlabs():
-        return (
-            f"{order['vendor_name']}... "
-            f"vanakkam... "
-            f"naan {order['company_name']}-la irundhu pesuren... "
-            f"ungalukku oru pudhu order vandhirukku"
-        )
+    """Short intro — name + company + 'new order'. Spoken first."""
     return (
         f"{order['vendor_name']}... "
         f"வணக்கம்... "
@@ -219,12 +212,6 @@ def build_greeting_intro(order: dict) -> str:
 def build_greeting_items(order: dict) -> str:
     """Order details — items + question. Spoken after vendor acknowledges."""
     items_summary = _build_items_summary(order)
-    if _use_elevenlabs():
-        return (
-            f"Order ID {order['order_id']}... "
-            f"{items_summary} "
-            f"idhu okay-va?"
-        )
     return (
         f"Order ID {order['order_id']}... "
         f"{items_summary} "
@@ -243,39 +230,23 @@ def build_system_prompt(order: dict) -> str:
     items_with_price = _build_items_with_price(order)
     total = _calc_total(order)
     total_word = _qty_word(total)
-    rupees_word = "roobai" if _use_elevenlabs() else "ரூபாய்"
+    rupees_word = "ரூபாய்"
     use_roman = _use_elevenlabs()
 
-    if use_roman:
-        roman_rule = "\n- CRITICAL: Write ALL Tamil words in ROMANIZED form (English letters), NOT Tamil script. Example: 'sari, order confirm pannitten. nandri!' NOT Tamil script."
-        fillers = "appo..., sari..., hmm..., okay..."
-        empathy = "puriyudha? sari... or konjam slow-a sollava?"
-        tanglish_ex = "confirm pannalama, okay-va?"
-        vary_ex = "'sari, confirm pannitten', sometimes 'okay, pottutten... nandri' or 'nalladhu, confirm aayiduchu'"
-        ack_ex = "'aa', 'hmm', 'okay', 'sari sari'"
-        q_end = "okay-va? or sariya? or sollungka?"
-        hesitate_ex = "puriyudha? marupadi sollava?"
-        busy_ex = "sari sari, quick-a mudikalam"
-        confirm_ex = "okay! confirm aayiduchu!"
-        reject_ex = "oh... puriyudhu..."
-        casual_ex = "sari sari!"
-        modify_resp = "sari, order-la yedhaavadhu maatram venum-na Keeggi customer care-a contact pannunga. avanga ungalukku help pannuvanga. nandri."
-        speak_fmt = "Romanized Tamil speech (English letters only) — natural and short"
-    else:
-        roman_rule = ""
-        fillers = "அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே..."
-        empathy = "புரியலையா? சரி... or கொஞ்சம் slow-ஆ சொல்லவா?"
-        tanglish_ex = "confirm பண்ணலாமா, okay-வா?"
-        vary_ex = "'சரி, confirm பண்ணிட்டேன்', sometimes 'ஓகே, போட்டுட்டேன்... நன்றி' or 'நல்லது, confirm ஆயிடுச்சு'"
-        ack_ex = "'ஆ', 'ஹ்ம்ம்', 'ஓகே', 'சரி சரி'"
-        q_end = "ஓகே-வா? or சரியா? or சொல்லுங்க?"
-        hesitate_ex = "புரியுதா? மறுபடி சொல்லவா?"
-        busy_ex = "சரி சரி, quick-ஆ முடிக்கலாம்"
-        confirm_ex = "ஓகே! confirm ஆயிடுச்சு!"
-        reject_ex = "ஓ... புரியுது..."
-        casual_ex = "சரி சரி!"
-        modify_resp = "சரி, ஆர்டர்-ல ஏதாவது மாற்றம் வேணும்-னா Keeggi customer care-ஐ contact பண்ணுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க. நன்றி."
-        speak_fmt = "Tamil speech text only — natural and short"
+    roman_rule = ""
+    fillers = "அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே..."
+    empathy = "புரியலையா? சரி... or கொஞ்சம் slow-ஆ சொல்லவா?"
+    tanglish_ex = "confirm பண்ணலாமா, okay-வா?"
+    vary_ex = "'சரி, confirm பண்ணிட்டேன்', sometimes 'ஓகே, போட்டுட்டேன்... நன்றி' or 'நல்லது, confirm ஆயிடுச்சு'"
+    ack_ex = "'ஆ', 'ஹ்ம்ம்', 'ஓகே', 'சரி சரி'"
+    q_end = "ஓகே-வா? or சரியா? or சொல்லுங்க?"
+    hesitate_ex = "புரியுதா? மறுபடி சொல்லவா?"
+    busy_ex = "சரி சரி, quick-ஆ முடிக்கலாம்"
+    confirm_ex = "ஓகே! confirm ஆயிடுச்சு!"
+    reject_ex = "ஓ... புரியுது..."
+    casual_ex = "சரி சரி!"
+    modify_resp = "சரி, ஆர்டர்-ல ஏதாவது மாற்றம் வேணும்-னா Keeggi customer care-ஐ contact பண்ணுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க. நன்றி."
+    speak_fmt = "Tamil speech text only — natural and short"
 
     order_details = (
         f"- Order ID: {order['order_id']}\n"
