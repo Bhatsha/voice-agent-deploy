@@ -117,7 +117,10 @@ def _use_elevenlabs() -> bool:
 
 
 def _qty_word(n: int) -> str:
-    """Return quantity as Tamil words"""
+    """Return quantity/amount as words. Uses Tamil words for small numbers (1-10),
+    digits for larger numbers (ElevenLabs reads digits better than complex Tamil words)."""
+    if _use_elevenlabs() and n > 10:
+        return str(n)
     return amount_to_tamil(n)
 
 
