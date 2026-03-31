@@ -74,18 +74,6 @@ _HUNDREDS_COMBINE = {1: "நூத்தி", 2: "இருநூத்தி", 
 _THOUSANDS_PREFIX = {1: "", 2: "ரெண்டு ", 3: "மூணு ", 4: "நாலு ", 5: "அஞ்சு ",
                      6: "ஆறு ", 7: "ஏழு ", 8: "எட்டு ", 9: "ஒன்பது "}
 
-# Romanized Tamil number words (for ElevenLabs TTS)
-_UNITS_ROMAN = {1: "onnu", 2: "rendu", 3: "moonu", 4: "naalu", 5: "anju",
-                6: "aaru", 7: "yezhu", 8: "ettu", 9: "ombadhu"}
-_TENS_ROMAN = {10: "pathu", 20: "irubadhu", 30: "muppadhu", 40: "naarppadhu",
-               50: "aimbadhu", 60: "arubadhu", 70: "ezhubadhu", 80: "enbadhu", 90: "thonnuru"}
-_HUNDREDS_ROMAN = {1: "nooru", 2: "irunooru", 3: "munnooru", 4: "naanooru",
-                   5: "ainooru", 6: "arunooru", 7: "ezhunooru", 8: "ennooru", 9: "thollayiram"}
-_HUNDREDS_COMBINE_ROMAN = {1: "noothi", 2: "irunoothi", 3: "munnoothi", 4: "naanoothi",
-                           5: "ainoothi", 6: "arunoothi", 7: "ezhunoothi", 8: "ennoothi",
-                           9: "thollayiraththu"}
-_THOUSANDS_PREFIX_ROMAN = {1: "", 2: "rendu ", 3: "moonu ", 4: "naalu ", 5: "anju ",
-                           6: "aaru ", 7: "yezhu ", 8: "ettu ", 9: "ombadhu "}
 
 
 def amount_to_tamil(n: int) -> str:
@@ -121,39 +109,6 @@ def amount_to_tamil(n: int) -> str:
             parts.append(_TENS[t])
     elif n > 0:
         parts.append(_UNITS[n])
-    return " ".join(parts)
-
-
-def amount_to_tamil_roman(n: int) -> str:
-    """Convert numeric amount to romanized spoken Tamil words"""
-    n = int(n)
-    if n == 0:
-        return "poojyam"
-    parts = []
-    if n >= 1000:
-        t = n // 1000
-        n %= 1000
-        prefix = _THOUSANDS_PREFIX_ROMAN.get(t, f"{t} ")
-        if n > 0:
-            parts.append(f"{prefix}aayiraththu")
-        else:
-            parts.append(f"{prefix}aayiram")
-    if n >= 100:
-        h = n // 100
-        n %= 100
-        if n > 0:
-            parts.append(_HUNDREDS_COMBINE_ROMAN.get(h, f"{h} nootru"))
-        else:
-            parts.append(_HUNDREDS_ROMAN.get(h, f"{h} nooru"))
-    if n >= 10:
-        t = (n // 10) * 10
-        u = n % 10
-        if u > 0:
-            parts.append(f"{_TENS_ROMAN[t]} {_UNITS_ROMAN[u]}")
-        else:
-            parts.append(_TENS_ROMAN[t])
-    elif n > 0:
-        parts.append(_UNITS_ROMAN[n])
     return " ".join(parts)
 
 

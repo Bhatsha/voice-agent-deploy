@@ -1,7 +1,6 @@
 import asyncio
 import base64
 import logging
-import time
 from typing import Callable, Optional
 
 import httpx
@@ -82,7 +81,7 @@ class ElevenLabsTTS:
         payload = {
             "text": text,
             "model_id": config.ELEVENLABS_MODEL,
-            "output_format": "mp3_44100_128",
+            "output_format": "mp3_22050_32",
             "voice_settings": {
                 "stability": 0.3,
                 "similarity_boost": 0.75,
@@ -153,9 +152,7 @@ class ElevenLabsTTS:
             await self._kill_ffmpeg()
 
     async def _read_and_send_pcm(self):
-        """Read PCM from ffmpeg stdout and send to Exotel with pacing."""
-        start_time = None
-        bytes_sent = 0
+        """Read PCM from ffmpeg stdout and send to Exotel."""
         buffer = b""
 
         try:
@@ -172,19 +169,6 @@ class ElevenLabsTTS:
 
                     audio_b64 = base64.b64encode(pcm_chunk).decode("ascii")
                     await self.on_audio(audio_b64)
-                    bytes_sent += len(pcm_chunk)
-
-                    # Start pacing timer from first chunk
-                    if start_time is None:
-                        start_time = time.monotonic()
-                        continue
-
-                    # Pace to real-time
-                    expected_time = bytes_sent / BYTES_PER_SECOND
-                    elapsed = time.monotonic() - start_time
-                    delay = expected_time - elapsed
-                    if delay > 0.005:
-                        await asyncio.sleep(delay)
 
             # Send remaining buffer
             if buffer and self._speaking:
