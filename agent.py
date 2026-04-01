@@ -25,6 +25,42 @@ class VoiceAgent:
     ECHO_WORD_OVERLAP_THRESHOLD = 0.5
     ECHO_MIN_WORDS = 4
 
+    # English → Tamil mapping to prevent ElevenLabs language switching
+    TAMIL_WORD_MAP = {
+        "confirm": "உறுதி",
+        "confirmed": "உறுதி ஆயிடுச்சு",
+        "accept": "ஏற்றுக்கிறேன்",
+        "accepted": "ஏற்றுக்கொள்ளப்பட்டது",
+        "reject": "நிராகரி",
+        "rejected": "நிராகரிக்கப்பட்டது",
+        "Thanks": "நன்றி",
+        "thanks": "நன்றி",
+        "Thank you": "நன்றி",
+        "thank you": "நன்றி",
+        "Bye": "வணக்கம்",
+        "bye": "வணக்கம்",
+        "okay": "சரி",
+        "ok": "சரி",
+        "OK": "சரி",
+        "customer care": "வாடிக்கையாளர் சேவை",
+        "contact": "தொடர்பு கொள்ளுங்க",
+        "ready": "தயார்",
+        "try": "முயற்சி",
+        "correct": "சரியா",
+        "done": "முடிஞ்சது",
+        "forward": "அனுப்பிட்டேன்",
+        "noted": "குறிச்சுக்கிட்டேன்",
+        "modify": "மாத்து",
+        "modification": "மாற்றம்",
+        "change": "மாற்றம்",
+        "cancel": "ரத்து",
+        "wait": "காத்திருங்க",
+        "hold": "காத்திருங்க",
+        "clear": "தெளிவா",
+        "repeat": "மறுபடி",
+        "request": "கோரிக்கை",
+    }
+
     MIN_TTS_DURATION_FOR_SILENCE_TIMEOUT = 1.2  # seconds
 
     def __init__(self, exotel_ws: WebSocket, stream_sid: str, call_sid: str,
@@ -102,10 +138,10 @@ class VoiceAgent:
             "போடலாம்", "எடுத்துக்கிறேன்",
         ]
         self._acceptance_closings = [
-            "சரிங்க, ஆர்டர் கன்ஃபர்ம் ஆயிடுச்சு. தேங்க்ஸ்!",
-            "ஓகே, ஆர்டர் ஏத்துக்கிட்டோம். Thanks!",
-            "சரி, accepted ஆயிடுச்சு. Bye!",
-            "நல்லது, confirm பண்ணிட்டேன். வணக்கம்!",
+            "சரிங்க, ஆர்டர் உறுதி ஆயிடுச்சு. நன்றி!",
+            "ஓகே, ஆர்டர் ஏத்துக்கிட்டோம். நன்றி!",
+            "சரி, ஆர்டர் ஆயிடுச்சு. வணக்கம்!",
+            "நல்லது, உறுதி பண்ணிட்டேன். வணக்கம்!",
         ]
 
     async def _send_log(self, msg: str):
@@ -253,19 +289,23 @@ class VoiceAgent:
 
     def _is_echo(self, text: str) -> bool:
         """Detect if a transcript is the agent's own voice echoed back.
-
-        Short responses (< ECHO_MIN_WORDS) are never treated as echo,
-        since real user replies like "ஓகே" should always pass through.
-        For longer transcripts, check word overlap with the last agent utterance.
+        Uses character trigrams for better Tamil matching (agglutinative morphology).
         """
         if not self._last_agent_text:
             return False
         words = text.split()
         if len(words) < self.ECHO_MIN_WORDS:
-            return False  # Short responses are never echo
-        text_words = set(w.lower() for w in words)
-        agent_words = set(w.lower() for w in self._last_agent_text.split())
-        overlap = len(text_words & agent_words) / len(text_words)
+            return False
+
+        def char_trigrams(s):
+            s = s.replace(" ", "").lower()
+            return set(s[i:i+3] for i in range(len(s)-2))
+
+        text_grams = char_trigrams(text)
+        agent_grams = char_trigrams(self._last_agent_text)
+        if not text_grams:
+            return False
+        overlap = len(text_grams & agent_grams) / len(text_grams)
         return overlap >= self.ECHO_WORD_OVERLAP_THRESHOLD
 
     async def _on_transcript(self, text: str, is_final: bool):
@@ -398,8 +438,13 @@ class VoiceAgent:
                     await self._finish_call(implied)
                     return
                 elif self._confirmation_pending:
-                    logger.info(f"WAITING: Still pending {self._confirmation_pending}, LLM returned non-terminal")
-                    await self._send_log(f"Still waiting for {self._confirmation_pending} confirmation")
+                    # If LLM returned non-question, reset pending to avoid being stuck
+                    if not self._speak_is_question(speak_text):
+                        logger.info(f"RESET: pending {self._confirmation_pending} cleared — LLM moved on")
+                        self._confirmation_pending = None
+                    else:
+                        logger.info(f"WAITING: Still pending {self._confirmation_pending}")
+                        await self._send_log(f"Still waiting for {self._confirmation_pending} confirmation")
             # Silence timeout will restart when TTS finishes (in _on_tts_done)
         except Exception as e:
             await self._send_log(f"Error: {e}")
@@ -446,7 +491,7 @@ class VoiceAgent:
             return None
         lower = text.lower()
         # Agent says order is confirmed/accepted + thanks/bye
-        accept_phrases = ["confirm பண்ணிட்டேன்", "போட்டுட்டேன்", "confirm ஆயிடுச்சு", "accept ஆயிடுச்சு"]
+        accept_phrases = ["confirm பண்ணிட்டேன்", "உறுதி பண்ணிட்டேன்", "போட்டுட்டேன்", "confirm ஆயிடுச்சு", "உறுதி ஆயிடுச்சு", "accept ஆயிடுச்சு", "ஏற்றுக்கிட்டோம்"]
         reject_phrases = ["reject பண்ணிட்டேன்", "noted", "புரிஞ்சது"]
         modify_phrases = ["modify request போட்டுட்டேன்", "forward பண்ணிட்டேன்", "request போட்டுட்டேன்", "customer care", "customer care-ஐ contact"]
 
@@ -546,7 +591,7 @@ class VoiceAgent:
             return "ACCEPTED"
         if any(s in lower for s in ["reject ஆயிடுச்சு", "ரிஜெக்ட் ஆயிடுச்சு"]) and has_thanks:
             return "REJECTED"
-        if any(s in lower for s in ["அப்புறம் கால் பண்றேன்", "அப்புறம் ட்ரை பண்றேன்"]):
+        if any(s in lower for s in ["அப்புறம் கால் பண்றேன்", "அப்புறம் ட்ரை பண்றேன்", "மீண்டும் அழைக்கிறேன்", "பிறகு அழைக்கிறேன்"]):
             return "CALLBACK_REQUESTED"
         if any(s in lower for s in ["கிளியரா சொல்ல முடியல", "கிளியரா புரியல"]):
             return "UNCLEAR_RESPONSE"
@@ -632,16 +677,11 @@ class VoiceAgent:
             logger.error(f"WebSocket close error: {e}")
 
     async def _on_tts_done(self):
-        """Called when TTS finishes generating — NON-BLOCKING.
+        """Called when TTS finishes — delegates to task to avoid blocking TTS listener."""
+        asyncio.create_task(self._on_tts_done_handler())
 
-        Must not sleep here because this runs inside the TTS listener loop.
-        Sleeping would block audio chunk processing and cause race conditions.
-
-        Echo suppression strategy:
-        - Audio-level: mic is blocked during TTS generation + 500ms buffer (handled in handle_media)
-        - Transcript-level: any remaining echo is caught by _is_echo() in _on_transcript
-        """
-        # Signal browser tester to flush accumulated MP3 chunks
+    async def _on_tts_done_handler(self):
+        """Safe: runs as independent task, can await freely."""
         try:
             await self.exotel_ws.send_json({"event": "tts_done"})
         except Exception:
@@ -711,7 +751,7 @@ class VoiceAgent:
             if self._silence_prompts_sent > self._max_silence_prompts:
                 # Too many unanswered prompts — end call
                 await self._send_log("No response after multiple prompts — ending call")
-                response = "சரி... அப்புறம் ட்ரை பண்றேன்."
+                response = "சரி... பிறகு மீண்டும் அழைக்கிறேன்."
                 self._last_agent_text = response
                 await self._speak(response)
                 await self._send_webhook("NO_RESPONSE")
@@ -722,7 +762,7 @@ class VoiceAgent:
             await self._send_log(f"Silence timeout — prompting vendor (attempt {self._silence_prompts_sent})")
             prompts = [
                 "ஹலோ... ஆர்டர் ஓகே-வா? இருக்கீங்களா?",
-                "ஹலோ... இருக்கீங்களா? ஆர்டர் confirm பண்ணலாமா?",
+                "ஹலோ... இருக்கீங்களா? ஆர்டர் உறுதி பண்ணலாமா?",
             ]
             prompt = prompts[min(self._silence_prompts_sent - 1, len(prompts) - 1)]
             self._last_agent_text = prompt
@@ -745,12 +785,22 @@ class VoiceAgent:
             if self.stt and self.stt._connected and not self._call_ended:
                 await self.stt.flush()
 
+    def _sanitize_for_tts(self, text: str) -> str:
+        """Replace English words with Tamil equivalents before sending to TTS.
+        Prevents ElevenLabs from switching to English pronunciation mid-sentence."""
+        if config.TTS_PROVIDER != "elevenlabs":
+            return text
+        for eng, tamil in self.TAMIL_WORD_MAP.items():
+            text = re.sub(rf'\b{re.escape(eng)}\b', tamil, text, flags=re.IGNORECASE)
+        return text
+
     async def _speak(self, text: str):
         if self.tts:
             self._cancel_silence_timeout()
             self._tts_audio_bytes = 0
             self._tts_speak_start = asyncio.get_event_loop().time()
-            await self.tts.speak(text)
+            clean_text = self._sanitize_for_tts(text)
+            await self.tts.speak(clean_text)
 
     async def _on_tts_audio(self, audio_base64: str):
         # Track audio bytes for playback duration estimation
