@@ -203,7 +203,7 @@ def build_system_prompt(order: dict) -> str:
     confirm_ex = "ஓகே! confirm ஆயிடுச்சு!"
     reject_ex = "ஓ... புரியுது..."
     casual_ex = "சரி சரி!"
-    modify_resp = "சரி, ஆர்டர்-ல ஏதாவது மாற்றம் வேணும்-னா Keeggi customer care-ஐ contact பண்ணுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க. நன்றி."
+    modify_resp = "சரி, மாற்றம் வேணும்-னா Keeggi-கிட்ட தொடர்பு கொள்ளுங்க. நன்றி."
     speak_fmt = "Tamil speech text only — natural and short"
 
     order_details = (

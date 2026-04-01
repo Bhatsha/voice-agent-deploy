@@ -43,7 +43,6 @@ class VoiceAgent:
         "ok": "சரி",
         "OK": "சரி",
         "customer care": "வாடிக்கையாளர் சேவை",
-        "contact": "தொடர்பு கொள்ளுங்க",
         "ready": "தயார்",
         "try": "முயற்சி",
         "correct": "சரியா",
