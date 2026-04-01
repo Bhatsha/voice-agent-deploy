@@ -790,8 +790,16 @@ class VoiceAgent:
         Prevents ElevenLabs from switching to English pronunciation mid-sentence."""
         if config.TTS_PROVIDER != "elevenlabs":
             return text
-        for eng, tamil in self.TAMIL_WORD_MAP.items():
-            text = re.sub(rf'\b{re.escape(eng)}\b', tamil, text, flags=re.IGNORECASE)
+        # Use simple case-insensitive replace — safer than regex \b with Tamil text
+        for eng, tamil in sorted(self.TAMIL_WORD_MAP.items(), key=lambda x: -len(x[0])):
+            # Replace longer phrases first to avoid partial matches
+            lower_text = text.lower()
+            eng_lower = eng.lower()
+            idx = lower_text.find(eng_lower)
+            while idx != -1:
+                text = text[:idx] + tamil + text[idx + len(eng):]
+                lower_text = text.lower()
+                idx = lower_text.find(eng_lower, idx + len(tamil))
         return text
 
     async def _speak(self, text: str):

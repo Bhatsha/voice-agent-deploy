@@ -84,8 +84,8 @@ class ElevenLabsTTS:
             "language_code": "ta",
             "output_format": "mp3_22050_32",
             "voice_settings": {
-                "stability": 0.75,
-                "similarity_boost": 0.85,
+                "stability": 0.9,
+                "similarity_boost": 0.9,
                 "style": 0.0,
                 "use_speaker_boost": True,
             },
