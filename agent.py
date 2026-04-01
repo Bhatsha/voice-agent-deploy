@@ -375,7 +375,7 @@ class VoiceAgent:
             # Check for MODIFIED before speaking — use clean hardcoded message
             pre_terminal = self._extract_terminal_status(status)
             if pre_terminal == "MODIFIED":
-                clean_modify_msg = "சரி, மாற்றம் வேணும்னா Keeggi கிட்ட தொடர்பு கொள்ளுங்க. நன்றி!"
+                clean_modify_msg = "ஆர்டர்ல ஏதாவது மாற்றம் வேணும்னா, Keeggi Customer Care-ஐ காண்டாக்ட் பண்ணுங்க."
                 await self._speak(clean_modify_msg)
                 reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
                 self._modification_reason = reason
