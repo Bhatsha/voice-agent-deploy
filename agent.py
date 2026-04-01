@@ -372,6 +372,18 @@ class VoiceAgent:
             # Track for echo detection
             self._last_agent_text = speak_text
 
+            # Check for MODIFIED before speaking — use clean hardcoded message
+            pre_terminal = self._extract_terminal_status(status)
+            if pre_terminal == "MODIFIED":
+                clean_modify_msg = "சரி, மாற்றம் வேணும்னா Keeggi கிட்ட தொடர்பு கொள்ளுங்க. நன்றி!"
+                await self._speak(clean_modify_msg)
+                reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
+                self._modification_reason = reason
+                logger.info(f"CALL END: MODIFIED — ending call directly")
+                await self._send_webhook("MODIFIED")
+                await self._finish_call("MODIFIED")
+                return
+
             # Speak only the <speak> content (not status tags)
             if speak_text:
                 await self._speak(speak_text)
@@ -393,15 +405,6 @@ class VoiceAgent:
             logger.info(f"STATUS: parsed='{status}' terminal={terminal} pending={self._confirmation_pending} is_question={self._speak_is_question(speak_text)}")
 
             if terminal:
-                # MODIFIED always ends immediately — no confirmation needed (redirect to customer care)
-                if terminal == "MODIFIED":
-                    reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
-                    self._modification_reason = reason
-                    logger.info(f"CALL END: MODIFIED — ending call directly")
-                    await self._send_webhook(terminal)
-                    await self._finish_call(terminal)
-                    return
-
                 if self._confirmation_pending == terminal:
                     # User confirmed — agent already asked, now end the call
                     if terminal == "REJECTED":
