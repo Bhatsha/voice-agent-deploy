@@ -122,20 +122,13 @@ class GeminiTTS:
                 if not self._speaking:
                     break
 
-                if (msg.server_content and
-                        msg.server_content.model_turn and
-                        msg.server_content.model_turn.parts):
-                    for part in msg.server_content.model_turn.parts:
-                        if part.inline_data and part.inline_data.data:
-                            raw = part.inline_data.data
-                            if isinstance(raw, str):
-                                raw = base64.b64decode(raw)
-                            if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
-                                try:
-                                    self._ffmpeg_proc.stdin.write(raw)
-                                    await self._ffmpeg_proc.stdin.drain()
-                                except (BrokenPipeError, ConnectionResetError):
-                                    break
+                if data := msg.data:
+                    if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                        try:
+                            self._ffmpeg_proc.stdin.write(data)
+                            await self._ffmpeg_proc.stdin.drain()
+                        except (BrokenPipeError, ConnectionResetError):
+                            break
 
                 if msg.server_content and msg.server_content.turn_complete:
                     break
