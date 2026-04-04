@@ -117,10 +117,8 @@ def _use_elevenlabs() -> bool:
 
 
 def _qty_word(n: int) -> str:
-    """Return quantity/amount as words. Uses Tamil words for small numbers (1-10),
-    digits for larger numbers (ElevenLabs reads digits better than complex Tamil words)."""
-    if _use_elevenlabs() and n > 10:
-        return str(n)
+    """Return quantity/amount as spoken Tamil words (always).
+    ElevenLabs mispronounces raw digits in Tamil mode, so always use Tamil words."""
     return amount_to_tamil(n)
 
 
@@ -138,17 +136,19 @@ def _build_items_summary(order: dict) -> str:
 
 
 def _build_items_with_price(order: dict) -> str:
-    """Build item summary with individual prices for system prompt"""
+    """Build item summary with individual prices for system prompt (all Tamil words)"""
     parts = []
     for item in order["items"]:
         qty_word = _qty_word(item["qty"])
         price = item["price"]
         total_item = price * item["qty"]
+        price_word = amount_to_tamil(price)
+        total_item_word = amount_to_tamil(total_item)
         variation = item.get("variation")
         if variation:
-            parts.append(f"{item['name']} {variation} {qty_word} — ₹{price} each, ₹{total_item} total")
+            parts.append(f"{item['name']} {variation} {qty_word} — ஒன்னுக்கு {price_word} ரூபாய், மொத்தம் {total_item_word} ரூபாய்")
         else:
-            parts.append(f"{item['name']} {qty_word} — ₹{price} each, ₹{total_item} total")
+            parts.append(f"{item['name']} {qty_word} — ஒன்னுக்கு {price_word} ரூபாய், மொத்தம் {total_item_word} ரூபாய்")
     return "\n    ".join(parts)
 
 
@@ -189,9 +189,6 @@ def build_system_prompt(order: dict) -> str:
     total = _calc_total(order)
     total_word = _qty_word(total)
     rupees_word = "ரூபாய்"  # Always Tamil — never RS/rupees/rupee
-    use_roman = _use_elevenlabs()
-
-    roman_rule = ""
     fillers = "அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே..."
     empathy = "புரியலையா? சரி... or கொஞ்சம் slow-ஆ சொல்லவா?"
     tanglish_ex = "confirm பண்ணலாமா, okay-வா?"
@@ -211,7 +208,7 @@ def build_system_prompt(order: dict) -> str:
         f"- Vendor: {order['vendor_name']}\n"
         f"- Company: {order['company_name']}\n"
         f"- Items:\n    {items_with_price}\n"
-        f"- Total: ₹{total} ({total_word} {rupees_word})"
+        f"- மொத்த தொகை: {total_word} {rupees_word}"
     )
 
     return f"""You are a Tamil voice agent calling restaurant vendors to confirm food orders.
@@ -248,7 +245,7 @@ HUMAN-LIKE SPEECH RULES (CRITICAL):
 - NEVER use formal Tamil. Speak like talking to a friend.
 - Use EMOTION: excitement "ஓகே! ஆயிடுச்சு!", empathy "ஓ... புரியுது...", casual "சரி சரி!"
 - Stay ENERGETIC throughout. NEVER become dull.
-- When saying price/amount, ALWAYS say "ரூபாய்" — NEVER say "RS", "rupees", "rupee", or "₹". Example: "890 ரூபாய்".
+- When saying price/amount, ALWAYS say the amount in Tamil words followed by "ரூபாய்" — NEVER say "RS", "rupees", "rupee", "₹", or use digits. Example: "எண்ணூத்தி தொண்ணூறு ரூபாய்" (not "890 ரூபாய்").
 
 CRITICAL PRIORITY RULE:
 - If vendor says ANYTHING about modifying, changing, or editing the order (even combined with other words), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
