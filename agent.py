@@ -386,6 +386,8 @@ class VoiceAgent:
                 else:
                     # Simple no / short response — end call
                     logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
+                    self._call_ended = True
+                    self._cancel_silence_timeout()
                     await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
                     await self._send_webhook(self._closing_status)
                     await self._finish_call(self._closing_status)
@@ -549,7 +551,10 @@ class VoiceAgent:
 
     async def _finish_call(self, status: str):
         """End the call after current speech finishes playing."""
-        # Wait for TTS to finish generating
+        # Mark call as ended IMMEDIATELY to prevent silence timeouts and further processing
+        self._call_ended = True
+        self._cancel_silence_timeout()
+        # Wait for TTS to finish generating the final message
         while self.tts and self.tts.is_speaking:
             await asyncio.sleep(0.1)
         await self._end_call(status)
@@ -822,6 +827,7 @@ class VoiceAgent:
             # If closing flow active and vendor went silent, treat as "no" — end with greeting
             if self._call_closing:
                 logger.info(f"Silence during closing — ending with {self._closing_status}")
+                self._call_ended = True
                 await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
                 await self._send_webhook(self._closing_status)
                 await self._finish_call(self._closing_status)
@@ -830,6 +836,7 @@ class VoiceAgent:
             # If confirmation is pending and vendor stayed silent, end call now
             if self._confirmation_pending:
                 await self._send_log(f"Silence after confirmation question — ending with {self._confirmation_pending}")
+                self._call_ended = True
                 goodbye = "சரி... நன்றி."
                 self._last_agent_text = goodbye
                 await self._speak(goodbye)
@@ -841,6 +848,7 @@ class VoiceAgent:
             if self._silence_prompts_sent > self._max_silence_prompts:
                 # Too many unanswered prompts — end call
                 await self._send_log("No response after multiple prompts — ending call")
+                self._call_ended = True
                 response = "சரி... பிறகு மீண்டும் அழைக்கிறேன்."
                 self._last_agent_text = response
                 await self._speak(response)
