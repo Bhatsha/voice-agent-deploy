@@ -126,7 +126,7 @@ class VoiceAgent:
         # VAD speech duration tracking for noise filtering
         self._vad_speech_start_time = 0.0  # timestamp when VAD detected speech start
         self._last_speech_duration_ms = 0.0  # duration of last speech segment in ms
-        self.MIN_SPEECH_DURATION_MS = 200  # ignore speech shorter than this
+        self.MIN_SPEECH_DURATION_MS = 150  # ignore speech shorter than this
 
         # Two-phase greeting: intro first, wait for any vendor response, then items
         self._greeting_phase = 0  # 0=normal, 1=waiting for vendor ack after intro
@@ -339,7 +339,7 @@ class VoiceAgent:
 
         # During confirmation wait, filter short ambiguous transcripts (noise like "ம்.", "ஆ")
         # But allow "ஹலோ" and other attention words — vendor is trying to get through
-        attention_words = ["ஹலோ", "hello", "சொல்லுங்க", "கேட்குறீங்களா"]
+        attention_words = ["ஹலோ", "hello", "சொல்லுங்க", "கேட்குறீங்களா", "ஆமா", "சரி", "ஓகே"]
         stripped = text.strip().rstrip(".?!")
         is_attention = any(w in stripped.lower() for w in attention_words)
         if self._confirmation_pending and len(text) <= 3 and not is_attention:
@@ -367,23 +367,32 @@ class VoiceAgent:
         # Handle call closing flow — agent asked "வேற ஏதாவது இருக்கா?"
         if self._call_closing:
             lower = text.lower().strip().rstrip(".?!")
-            # Check if vendor is talking about the order (new intent) — send to LLM instead
+            text_len = len(text.strip())
             order_words = ["ஆர்டர்", "order", "cancel", "reject", "வேணாம்", "வேண்டாம்",
-                           "மாத்து", "modify", "change", "எடுக்க", "item", "price", "விலை"]
-            has_order_intent = any(w in lower for w in order_words) and len(text.strip()) > 10
-            # Simple "no" / short response = OK to end
-            is_simple_no = not has_order_intent and (len(text.strip()) <= 5 or
-                lower in ["இல்லை", "இல்ல", "வேணாம்", "போதும்", "அவ்வளவு தான்",
-                           "no", "nothing", "நோ", "ஒன்னும் இல்ல", "bye", "வணக்கம்"])
-            if is_simple_no:
-                logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
-                await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
-                await self._send_webhook(self._closing_status)
-                await self._finish_call(self._closing_status)
-                return
+                           "மாத்து", "modify", "change", "எடுக்க", "item", "price", "விலை",
+                           "accept", "சரி", "ஓகே"]
+            has_order_words = any(w in lower for w in order_words)
+
+            if text_len <= 8 and not has_order_words:
+                # Short text with no order words — check for attention words first
+                attention_words = ["ஹலோ", "hello", "சொல்லுங்க", "கேட்குறீங்களா"]
+                is_attention = any(w in lower for w in attention_words)
+                if is_attention:
+                    # Vendor trying to get attention — reset closing, send to LLM
+                    logger.info(f"CLOSING RESET: Attention word in short text: '{text}'")
+                    self._call_closing = False
+                    self._closing_status = None
+                    self._confirmation_pending = None
+                else:
+                    # Simple no / short response — end call
+                    logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
+                    await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
+                    await self._send_webhook(self._closing_status)
+                    await self._finish_call(self._closing_status)
+                    return
             else:
-                # Vendor has more to say — reset closing, continue conversation
-                logger.info(f"CLOSING RESET: Vendor has more to say: '{text}'")
+                # Longer text or has order words — vendor has more to say
+                logger.info(f"CLOSING RESET: Vendor has more to say: '{text}' (len={text_len}, order_words={has_order_words})")
                 self._call_closing = False
                 self._closing_status = None
                 self._confirmation_pending = None
@@ -391,6 +400,9 @@ class VoiceAgent:
 
         self._processing = True
         self._silence_prompts_sent = 0  # Reset on real user response
+        if self._silence_timeout_sec != 7:
+            logger.info(f"HOLD RESET: silence timeout back to 7s (was {self._silence_timeout_sec}s)")
+            self._silence_timeout_sec = 7  # Reset hold timeout on vendor response
         try:
             await self._send_log(f"Thinking...")
             response = await self.llm.chat(text)
@@ -448,6 +460,31 @@ class VoiceAgent:
                     self._closing_status = terminal
                     self._confirmation_pending = None
                     return
+                elif self._confirmation_pending and self._confirmation_pending != terminal:
+                    # STATUS CHANGE: vendor changed mind (e.g. ACCEPTED → REJECTED)
+                    old_pending = self._confirmation_pending
+                    logger.info(f"STATUS CHANGE: {old_pending} → {terminal}")
+                    await self._send_log(f"Status change: {old_pending} → {terminal}")
+                    self._confirmation_pending = None  # reset old pending
+                    if terminal == "REJECTED":
+                        reason = self._extract_reason_from_status(status)
+                        if reason:
+                            self._rejection_reason = reason
+                    if self._speak_is_question(speak_text):
+                        # Agent asking a question about the new status — set new pending
+                        if speak_text:
+                            await self._speak(speak_text)
+                        self._confirmation_pending = terminal
+                        logger.info(f"CONFIRMATION SET (after change): pending={terminal}")
+                        await self._send_log(f"Confirmation pending for {terminal} — waiting for user YES")
+                    else:
+                        # Not a question — enter closing flow with new status
+                        logger.info(f"TERMINAL {terminal} (after change) — asking before ending")
+                        closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                        await self._speak(closing_text)
+                        self._call_closing = True
+                        self._closing_status = terminal
+                        return
                 elif self._speak_is_question(speak_text):
                     # Agent is asking a confirmation question — speak and set pending, wait for user
                     if speak_text:
@@ -479,15 +516,17 @@ class VoiceAgent:
                     return
                 # Normal non-terminal response — just speak
                 if speak_text:
-                    await self._speak(speak_text)
-                elif self._confirmation_pending:
-                    # If LLM returned non-question, reset pending to avoid being stuck
-                    if not self._speak_is_question(speak_text):
-                        logger.info(f"RESET: pending {self._confirmation_pending} cleared — LLM moved on")
+                    # If confirmation is pending and LLM response is not a question, reset pending
+                    if self._confirmation_pending and not self._speak_is_question(speak_text):
+                        logger.info(f"RESET: pending {self._confirmation_pending} cleared — LLM moved on (non-question response)")
                         self._confirmation_pending = None
-                    else:
-                        logger.info(f"WAITING: Still pending {self._confirmation_pending}")
-                        await self._send_log(f"Still waiting for {self._confirmation_pending} confirmation")
+                    await self._speak(speak_text)
+                    # Check for hold-related words — temporarily increase silence timeout
+                    hold_words = ["காத்திருக்கிறேன்", "wait", "hold", "காத்திருங்க", "காத்திருக்கேன்"]
+                    if any(w in speak_text.lower() for w in hold_words):
+                        logger.info(f"HOLD detected in response — increasing silence timeout to 45s")
+                        await self._send_log("Hold detected — waiting up to 45s for vendor")
+                        self._silence_timeout_sec = 45
             # Silence timeout will restart when TTS finishes (in _on_tts_done)
         except Exception as e:
             await self._send_log(f"Error: {e}")
@@ -899,6 +938,10 @@ class VoiceAgent:
 
     async def stop(self):
         logger.info(f"Agent stopping for call {self.call_sid}")
+        # Send webhook if call was in closing flow but disconnected before webhook was sent
+        if self._call_closing and self._closing_status and not self._webhook_sent:
+            logger.info(f"ABRUPT DISCONNECT: sending webhook for {self._closing_status} before cleanup")
+            await self._send_webhook(self._closing_status)
         self._cancel_silence_timeout()
         if self._greeting_fallback_task and not self._greeting_fallback_task.done():
             self._greeting_fallback_task.cancel()
