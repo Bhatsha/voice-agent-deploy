@@ -232,6 +232,14 @@ class GeminiLiveAgent:
 
         logger.info(f"GeminiLiveAgent connected — call {self.call_sid}")
 
+        # Trigger Gemini to speak the greeting immediately
+        await asyncio.sleep(0.3)
+        try:
+            await self._session.send_realtime_input(text=".")
+            logger.info("Greeting trigger sent to Gemini")
+        except Exception as e:
+            logger.error(f"Failed to send greeting trigger: {e}")
+
     async def handle_media(self, payload: str):
         """
         Receive base64-encoded 8kHz linear16 PCM from Exotel and forward to Gemini.
@@ -405,66 +413,68 @@ class GeminiLiveAgent:
     async def _receive_loop(self):
         """
         Background task: receive audio and tool-call responses from Gemini Live.
+        Outer while loop ensures we re-enter receive() after each turn completes.
         """
         try:
-            async for response in self._session.receive():
-                if self._call_ended:
-                    break
+            while not self._call_ended:
+                async for response in self._session.receive():
+                    if self._call_ended:
+                        break
 
-                # ---- Audio output ----
-                if response.data:
-                    self._gemini_speaking = True
-                    await self._feed_ffmpeg(response.data)
+                    # ---- Audio output ----
+                    if response.data:
+                        self._gemini_speaking = True
+                        await self._feed_ffmpeg(response.data)
 
-                # ---- Tool calls ----
-                if response.tool_call:
-                    tool_responses = []
-                    for fc in response.tool_call.function_calls:
-                        logger.info(f"Tool call: {fc.name} args={dict(fc.args)}")
+                    # ---- Tool calls ----
+                    if response.tool_call:
+                        tool_responses = []
+                        for fc in response.tool_call.function_calls:
+                            logger.info(f"Tool call: {fc.name} args={dict(fc.args)}")
 
-                        if fc.name == "set_call_status":
-                            self._final_status = fc.args.get("status")
-                            self._final_reason = fc.args.get("reason", "")
-                            logger.info(
-                                f"Status set: {self._final_status} reason={self._final_reason!r}"
+                            if fc.name == "set_call_status":
+                                self._final_status = fc.args.get("status")
+                                self._final_reason = fc.args.get("reason", "")
+                                logger.info(
+                                    f"Status set: {self._final_status} reason={self._final_reason!r}"
+                                )
+                            elif fc.name == "end_call":
+                                # Schedule end_call as a task so we can respond to the tool first
+                                asyncio.create_task(self._end_call())
+
+                            tool_responses.append(
+                                types.FunctionResponse(
+                                    name=fc.name,
+                                    id=fc.id,
+                                    response={"result": "ok"},
+                                )
                             )
-                        elif fc.name == "end_call":
-                            # Schedule end_call as a task so we can respond to the tool first
-                            asyncio.create_task(self._end_call())
 
-                        tool_responses.append(
-                            types.FunctionResponse(
-                                name=fc.name,
-                                id=fc.id,
-                                response={"result": "ok"},
-                            )
-                        )
+                        # Always acknowledge tool calls
+                        if tool_responses:
+                            try:
+                                await self._session.send_tool_response(
+                                    function_responses=tool_responses
+                                )
+                            except Exception as e:
+                                logger.error(f"Tool response error: {e}")
 
-                    # Always acknowledge tool calls
-                    if tool_responses:
-                        try:
-                            await self._session.send_tool_response(
-                                function_responses=tool_responses
-                            )
-                        except Exception as e:
-                            logger.error(f"Tool response error: {e}")
-
-                # ---- Turn complete ----
-                if response.server_content and response.server_content.turn_complete:
-                    self._gemini_speaking = False
-                    self._last_audio_finished = time.time()
-                    # Flush ffmpeg by sending a brief silence so buffered audio drains
-                    # (ffmpeg buffers a small window; sending silence flushes it)
-                    if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
-                        try:
-                            # 100ms of silence at 24kHz mono s16le = 24000*2*0.1 = 4800 bytes
-                            silence = b"\x00" * 4800
-                            loop = asyncio.get_event_loop()
-                            await loop.run_in_executor(
-                                None, self._ffmpeg_proc.stdin.write, silence
-                            )
-                        except Exception:
-                            pass
+                    # ---- Turn complete ----
+                    if response.server_content and response.server_content.turn_complete:
+                        self._gemini_speaking = False
+                        self._last_audio_finished = time.time()
+                        logger.info("Turn complete — waiting for next input")
+                        # Flush ffmpeg by sending a brief silence so buffered audio drains
+                        if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                            try:
+                                # 100ms of silence at 24kHz mono s16le = 4800 bytes
+                                silence = b"\x00" * 4800
+                                loop = asyncio.get_event_loop()
+                                await loop.run_in_executor(
+                                    None, self._ffmpeg_proc.stdin.write, silence
+                                )
+                            except Exception:
+                                pass
 
         except asyncio.CancelledError:
             pass
