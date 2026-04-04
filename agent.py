@@ -396,22 +396,19 @@ class VoiceAgent:
             # Check for MODIFIED before speaking — use clean hardcoded message
             pre_terminal = self._extract_terminal_status(status)
             if pre_terminal == "MODIFIED":
-                clean_modify_msg = "ஆர்டர்ல ஏதாவது மாற்றம் வேணும்னா, Keeggi Customer Care-ஐ காண்டாக்ட் பண்ணுங்க."
+                clean_modify_msg = "ஆர்டர்ல ஏதாவது மாற்றம் வேணும்னா, Keeggi Customer Care-ஐ காண்டாக்ட் பண்ணுங்க... வேற ஏதாவது இருக்கா?"
                 await self._speak(clean_modify_msg)
                 reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
                 self._modification_reason = reason
                 logger.info(f"MODIFIED — asking before ending")
                 self._call_closing = True
                 self._closing_status = "MODIFIED"
-                await self._speak("வேற ஏதாவது இருக்கா?")
                 return
-
-            # Speak only the <speak> content (not status tags)
-            if speak_text:
-                await self._speak(speak_text)
 
             # Track UNCLEAR_RESPONSE — only end call after repeated failures
             if "UNCLEAR" in status.upper():
+                if speak_text:
+                    await self._speak(speak_text)
                 self._unclear_count += 1
                 await self._send_log(f"Unclear response ({self._unclear_count}/{self._max_unclear_before_end})")
                 if self._unclear_count >= self._max_unclear_before_end:
@@ -428,19 +425,22 @@ class VoiceAgent:
 
             if terminal:
                 if self._confirmation_pending == terminal:
-                    # User confirmed — ask "வேற ஏதாவது இருக்கா?" before ending
+                    # User confirmed — combine LLM text + closing question in one speak
                     if terminal == "REJECTED":
                         new_reason = self._extract_reason_from_status(status) or text.strip()
                         if new_reason and new_reason not in self._rejection_reason:
                             self._rejection_reason = (self._rejection_reason + " | " + new_reason) if self._rejection_reason else new_reason
                     logger.info(f"CONFIRMED {terminal} — asking before ending")
+                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = terminal
                     self._confirmation_pending = None
-                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
                 elif self._speak_is_question(speak_text):
-                    # Agent is asking a confirmation question — set pending, wait for user
+                    # Agent is asking a confirmation question — speak and set pending, wait for user
+                    if speak_text:
+                        await self._speak(speak_text)
                     self._confirmation_pending = terminal
                     if terminal == "REJECTED":
                         reason = self._extract_reason_from_status(status)
@@ -449,21 +449,26 @@ class VoiceAgent:
                     logger.info(f"CONFIRMATION SET: pending={terminal}")
                     await self._send_log(f"Confirmation pending for {terminal} — waiting for user YES")
                 else:
-                    # Terminal status with no question — ask before ending
+                    # Terminal status with no question — combine LLM text + closing question
                     logger.info(f"TERMINAL {terminal} no question — asking before ending")
+                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = terminal
-                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
             elif not terminal:
-                # LLM returned non-terminal (e.g. CONFIRMING) — check if speech implies call is done
+                # Check if speech implies call is done — combine if so
                 implied = self._speak_implies_call_done(speak_text)
                 if implied:
                     logger.info(f"IMPLIED {implied} — asking before ending")
+                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = implied
-                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
+                # Normal non-terminal response — just speak
+                if speak_text:
+                    await self._speak(speak_text)
                 elif self._confirmation_pending:
                     # If LLM returned non-question, reset pending to avoid being stuck
                     if not self._speak_is_question(speak_text):
