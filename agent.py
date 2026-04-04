@@ -118,6 +118,8 @@ class VoiceAgent:
         self._rejection_reason = ""
         self._modification_reason = ""
         self._confirmation_pending = None  # None or expected status: "ACCEPTED", "REJECTED", "MODIFIED"
+        self._call_closing = False  # True when agent asked "வேற ஏதாவது இருக்கா?" and waiting for response
+        self._closing_status = None  # The terminal status to use when call finally ends
 
         # VAD speech duration tracking for noise filtering
         self._vad_speech_start_time = 0.0  # timestamp when VAD detected speech start
@@ -357,6 +359,25 @@ class VoiceAgent:
             await self._send_log(f"Queued transcript (LLM busy): '{text}'")
             return
 
+        # Handle call closing flow — agent asked "வேற ஏதாவது இருக்கா?"
+        if self._call_closing:
+            lower = text.lower().strip().rstrip(".?!")
+            no_phrases = ["இல்லை", "இல்ல", "வேணாம்", "போதும்", "அவ்வளவு தான்", "no", "nothing", "நோ", "ஒன்னும் இல்ல", "bye", "வணக்கம்"]
+            is_no = any(p in lower for p in no_phrases) or len(text.strip()) <= 5
+            if is_no:
+                logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
+                await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
+                await self._send_webhook(self._closing_status)
+                await self._finish_call(self._closing_status)
+                return
+            else:
+                # Vendor has more to say — reset closing, continue conversation
+                logger.info(f"CLOSING RESET: Vendor has more to say: '{text}'")
+                self._call_closing = False
+                self._closing_status = None
+                self._confirmation_pending = None
+                # Fall through to normal LLM processing
+
         self._processing = True
         self._silence_prompts_sent = 0  # Reset on real user response
         try:
@@ -379,9 +400,10 @@ class VoiceAgent:
                 await self._speak(clean_modify_msg)
                 reason = self._extract_reason_from_status(status) or "vendor requested modification, directed to customer care"
                 self._modification_reason = reason
-                logger.info(f"CALL END: MODIFIED — ending call directly")
-                await self._send_webhook("MODIFIED")
-                await self._finish_call("MODIFIED")
+                logger.info(f"MODIFIED — asking before ending")
+                self._call_closing = True
+                self._closing_status = "MODIFIED"
+                await self._speak("வேற ஏதாவது இருக்கா?")
                 return
 
             # Speak only the <speak> content (not status tags)
@@ -406,15 +428,16 @@ class VoiceAgent:
 
             if terminal:
                 if self._confirmation_pending == terminal:
-                    # User confirmed — agent already asked, now end the call
+                    # User confirmed — ask "வேற ஏதாவது இருக்கா?" before ending
                     if terminal == "REJECTED":
                         new_reason = self._extract_reason_from_status(status) or text.strip()
                         if new_reason and new_reason not in self._rejection_reason:
                             self._rejection_reason = (self._rejection_reason + " | " + new_reason) if self._rejection_reason else new_reason
-                    logger.info(f"CALL END: User confirmed {terminal}")
-                    await self._send_log(f"User confirmed {terminal} — ending call")
-                    await self._send_webhook(terminal)
-                    await self._finish_call(terminal)
+                    logger.info(f"CONFIRMED {terminal} — asking before ending")
+                    self._call_closing = True
+                    self._closing_status = terminal
+                    self._confirmation_pending = None
+                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
                 elif self._speak_is_question(speak_text):
                     # Agent is asking a confirmation question — set pending, wait for user
@@ -426,18 +449,20 @@ class VoiceAgent:
                     logger.info(f"CONFIRMATION SET: pending={terminal}")
                     await self._send_log(f"Confirmation pending for {terminal} — waiting for user YES")
                 else:
-                    # Terminal status with no question — end call directly
-                    logger.info(f"CALL END: Terminal {terminal} with no question — ending directly")
-                    await self._send_webhook(terminal)
-                    await self._finish_call(terminal)
+                    # Terminal status with no question — ask before ending
+                    logger.info(f"TERMINAL {terminal} no question — asking before ending")
+                    self._call_closing = True
+                    self._closing_status = terminal
+                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
             elif not terminal:
                 # LLM returned non-terminal (e.g. CONFIRMING) — check if speech implies call is done
                 implied = self._speak_implies_call_done(speak_text)
                 if implied:
-                    logger.info(f"CALL END: LLM said CONFIRMING but speech implies {implied} — ending call")
-                    await self._send_webhook(implied)
-                    await self._finish_call(implied)
+                    logger.info(f"IMPLIED {implied} — asking before ending")
+                    self._call_closing = True
+                    self._closing_status = implied
+                    await self._speak("சரி... வேற ஏதாவது இருக்கா?")
                     return
                 elif self._confirmation_pending:
                     # If LLM returned non-question, reset pending to avoid being stuck
@@ -737,6 +762,14 @@ class VoiceAgent:
             await asyncio.sleep(total_wait)
 
             if self._call_ended or self._processing:
+                return
+
+            # If closing flow active and vendor went silent, treat as "no" — end with greeting
+            if self._call_closing:
+                logger.info(f"Silence during closing — ending with {self._closing_status}")
+                await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
+                await self._send_webhook(self._closing_status)
+                await self._finish_call(self._closing_status)
                 return
 
             # If confirmation is pending and vendor stayed silent, end call now
