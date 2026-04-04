@@ -18,22 +18,9 @@ _TTS_SYSTEM_INSTRUCTION = (
 )
 
 
-def _parse_sample_rate(mime_type: str) -> int:
-    """Extract sample rate from mime type like 'audio/pcm;rate=24000'."""
-    for part in (mime_type or "").split(";"):
-        part = part.strip()
-        if part.lower().startswith("rate="):
-            try:
-                return int(part.split("=", 1)[1])
-            except (ValueError, IndexError):
-                pass
-    return 24000
-
-
 class GeminiTTS:
-    """Text-to-Speech using Gemini Live API (gemini-3.1-flash-live-preview).
-    True streaming — first audio chunk arrives in ~1.8s.
-    Drop-in replacement for ElevenLabsTTS / SarvamTTS.
+    """Text-to-Speech using Gemini Live API with persistent connection.
+    One WebSocket connection per call — eliminates per-utterance setup overhead.
     """
 
     def __init__(self, on_audio: Callable, on_log: Callable = None, on_done: Callable = None,
@@ -48,6 +35,8 @@ class GeminiTTS:
         self._playback_task: Optional[asyncio.Task] = None
         self._ffmpeg_proc: Optional[asyncio.subprocess.Process] = None
         self._client = None
+        self._session = None
+        self._live_ctx = None
 
     def _log(self, msg):
         logger.info(msg)
@@ -59,13 +48,28 @@ class GeminiTTS:
         return self._speaking
 
     async def connect(self):
+        """Open one persistent Live API connection for the entire call."""
         from google import genai
+        from google.genai import types
+
         self._client = genai.Client(
             api_key=self._api_key,
             http_options={"api_version": "v1beta"},
         )
+
+        live_config = types.LiveConnectConfig(
+            system_instruction=types.Content(
+                parts=[types.Part(text=_TTS_SYSTEM_INSTRUCTION)]
+            ),
+            response_modalities=["AUDIO"],
+        )
+
+        self._live_ctx = self._client.aio.live.connect(
+            model=self._model, config=live_config
+        )
+        self._session = await self._live_ctx.__aenter__()
         self._connected = True
-        self._log(f"Gemini Live TTS ready (model={self._model})")
+        self._log(f"Gemini Live TTS connected (model={self._model})")
 
     async def speak(self, text: str):
         """Start TTS — returns immediately, audio streams in background."""
@@ -92,16 +96,11 @@ class GeminiTTS:
             self._ffmpeg_proc = None
 
     async def _stream_and_play(self, text: str):
-        """Connect to Gemini Live, stream PCM 24kHz → ffmpeg → 8kHz → Exotel."""
-        from google.genai import types
-
+        """Send text on persistent session, stream PCM 24kHz → ffmpeg → 8kHz → Exotel."""
         try:
-            live_config = types.LiveConnectConfig(
-                system_instruction=types.Content(
-                    parts=[types.Part(text=_TTS_SYSTEM_INSTRUCTION)]
-                ),
-                response_modalities=["AUDIO"],
-            )
+            if not self._session:
+                self._log("No session — reconnecting")
+                await self.connect()
 
             # Start ffmpeg: PCM 24kHz → PCM 8kHz
             self._ffmpeg_proc = await asyncio.create_subprocess_exec(
@@ -117,33 +116,29 @@ class GeminiTTS:
 
             reader_task = asyncio.create_task(self._read_and_send_pcm())
 
-            async with self._client.aio.live.connect(
-                model=self._model, config=live_config
-            ) as session:
-                await session.send_realtime_input(text=text)
+            await self._session.send_realtime_input(text=text)
 
-                async for msg in session.receive():
-                    if not self._speaking:
-                        break
+            async for msg in self._session.receive():
+                if not self._speaking:
+                    break
 
-                    # Audio arrives as inline_data in server_content parts
-                    if (msg.server_content and
-                            msg.server_content.model_turn and
-                            msg.server_content.model_turn.parts):
-                        for part in msg.server_content.model_turn.parts:
-                            if part.inline_data and part.inline_data.data:
-                                raw = part.inline_data.data
-                                if isinstance(raw, str):
-                                    raw = base64.b64decode(raw)
-                                if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
-                                    try:
-                                        self._ffmpeg_proc.stdin.write(raw)
-                                        await self._ffmpeg_proc.stdin.drain()
-                                    except (BrokenPipeError, ConnectionResetError):
-                                        break
+                if (msg.server_content and
+                        msg.server_content.model_turn and
+                        msg.server_content.model_turn.parts):
+                    for part in msg.server_content.model_turn.parts:
+                        if part.inline_data and part.inline_data.data:
+                            raw = part.inline_data.data
+                            if isinstance(raw, str):
+                                raw = base64.b64decode(raw)
+                            if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                                try:
+                                    self._ffmpeg_proc.stdin.write(raw)
+                                    await self._ffmpeg_proc.stdin.drain()
+                                except (BrokenPipeError, ConnectionResetError):
+                                    break
 
-                    if msg.server_content and msg.server_content.turn_complete:
-                        break
+                if msg.server_content and msg.server_content.turn_complete:
+                    break
 
             # EOF to ffmpeg
             if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
@@ -168,6 +163,8 @@ class GeminiTTS:
             self._log(f"Speak error: {e}")
             self._speaking = False
             await self._kill_ffmpeg()
+            # Reconnect for next speak()
+            self._session = None
 
     async def _read_and_send_pcm(self):
         """Read resampled PCM from ffmpeg and send to Exotel in 20ms chunks."""
@@ -201,4 +198,11 @@ class GeminiTTS:
         await self._kill_ffmpeg()
         if self._playback_task and not self._playback_task.done():
             self._playback_task.cancel()
+        if self._live_ctx and self._session:
+            try:
+                await self._live_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+        self._session = None
+        self._live_ctx = None
         logger.info("Gemini TTS closed")
