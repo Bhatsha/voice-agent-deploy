@@ -543,9 +543,11 @@ class VoiceAgent:
         # Mark call as ended IMMEDIATELY to prevent silence timeouts and further processing
         self._call_ended = True
         self._cancel_silence_timeout()
-        # Wait for TTS to finish generating the final message
-        while self.tts and self.tts.is_speaking:
+        # Wait for TTS to finish generating the final message (max 10s safety)
+        wait_count = 0
+        while self.tts and self.tts.is_speaking and wait_count < 100:
             await asyncio.sleep(0.1)
+            wait_count += 1
         await self._end_call(status)
 
     def _speak_is_question(self, text: str) -> bool:
@@ -718,8 +720,8 @@ class VoiceAgent:
         }
         label = status_labels.get(status, status)
 
-        # Wait for TTS to finish playing the goodbye message
-        await asyncio.sleep(5)
+        # Wait for goodbye message to finish playing on the phone
+        await asyncio.sleep(2)
 
         # Notify browser tester (if connected via browser)
         try:
