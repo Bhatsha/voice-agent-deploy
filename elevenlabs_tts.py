@@ -83,10 +83,13 @@ class ElevenLabsTTS:
             "model_id": config.ELEVENLABS_MODEL,
             "language_code": "ta",
             "output_format": "mp3_22050_32",
+            "apply_text_normalization": "on",
+            "seed": 42,
             "voice_settings": {
                 "stability": 0.9,
                 "similarity_boost": 0.9,
                 "style": 0.0,
+                "speed": 1.0,
                 "use_speaker_boost": True,
             },
         }
