@@ -12,21 +12,29 @@ BYTES_PER_SECOND = 16000
 CHUNK_DURATION_MS = 20
 CHUNK_BYTES = int(BYTES_PER_SECOND * CHUNK_DURATION_MS / 1000)  # 320 bytes
 
+_TTS_SYSTEM_INSTRUCTION = (
+    "You are a text-to-speech reader. Speak exactly the text the user sends, "
+    "word for word, in the same language. Do not add, change, or omit any words."
+)
+
 
 def _parse_sample_rate(mime_type: str) -> int:
-    """Extract sample rate from MIME type like 'audio/L16;rate=24000'."""
-    for part in mime_type.split(";"):
+    """Extract sample rate from mime type like 'audio/pcm;rate=24000'."""
+    for part in (mime_type or "").split(";"):
         part = part.strip()
         if part.lower().startswith("rate="):
             try:
                 return int(part.split("=", 1)[1])
             except (ValueError, IndexError):
                 pass
-    return 24000  # Gemini TTS default
+    return 24000
 
 
 class GeminiTTS:
-    """Text-to-Speech using Gemini 2.5 Flash TTS — drop-in replacement for ElevenLabsTTS."""
+    """Text-to-Speech using Gemini Live API (gemini-3.1-flash-live-preview).
+    True streaming — first audio chunk arrives in ~1.8s.
+    Drop-in replacement for ElevenLabsTTS / SarvamTTS.
+    """
 
     def __init__(self, on_audio: Callable, on_log: Callable = None, on_done: Callable = None,
                  codec: str = None, sample_rate: int = None, api_key: str = None):
@@ -34,7 +42,6 @@ class GeminiTTS:
         self.on_log = on_log
         self.on_done = on_done
         self._api_key = api_key or config.GEMINI_API_KEY
-        self._voice_name = config.GEMINI_TTS_VOICE
         self._model = config.GEMINI_TTS_MODEL
         self._speaking = False
         self._connected = False
@@ -53,9 +60,12 @@ class GeminiTTS:
 
     async def connect(self):
         from google import genai
-        self._client = genai.Client(api_key=self._api_key)
+        self._client = genai.Client(
+            api_key=self._api_key,
+            http_options={"api_version": "v1beta"},
+        )
         self._connected = True
-        self._log(f"Gemini TTS ready (model={self._model}, voice={self._voice_name})")
+        self._log(f"Gemini Live TTS ready (model={self._model})")
 
     async def speak(self, text: str):
         """Start TTS — returns immediately, audio streams in background."""
@@ -82,75 +92,60 @@ class GeminiTTS:
             self._ffmpeg_proc = None
 
     async def _stream_and_play(self, text: str):
-        """Stream PCM from Gemini TTS → ffmpeg resample → Exotel 8kHz."""
+        """Connect to Gemini Live, stream PCM 24kHz → ffmpeg → 8kHz → Exotel."""
         from google.genai import types
 
         try:
-            contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=text)],
-                )
-            ]
-            generate_config = types.GenerateContentConfig(
-                temperature=1,
-                response_modalities=["audio"],
-                speech_config=types.SpeechConfig(
-                    voice_config=types.VoiceConfig(
-                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                            voice_name=self._voice_name
-                        )
-                    )
+            live_config = types.LiveConnectConfig(
+                system_instruction=types.Content(
+                    parts=[types.Part(text=_TTS_SYSTEM_INSTRUCTION)]
                 ),
+                response_modalities=["AUDIO"],
             )
 
-            # ffmpeg will be started on the first chunk (once we know sample rate)
-            reader_task = None
-            sample_rate_detected = False
+            # Start ffmpeg: PCM 24kHz → PCM 8kHz
+            self._ffmpeg_proc = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-f", "s16le", "-ar", "24000", "-ac", "1", "-i", "pipe:0",
+                "-f", "s16le", "-ar", "8000", "-ac", "1",
+                "-loglevel", "error",
+                "pipe:1",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
 
-            async for chunk in await self._client.aio.models.generate_content_stream(
-                model=self._model,
-                contents=contents,
-                config=generate_config,
-            ):
-                if not self._speaking:
-                    break
-                if chunk.parts is None:
-                    continue
+            reader_task = asyncio.create_task(self._read_and_send_pcm())
 
-                part = chunk.parts[0]
-                if not (part.inline_data and part.inline_data.data):
-                    continue
+            async with self._client.aio.live.connect(
+                model=self._model, config=live_config
+            ) as session:
+                await session.send_realtime_input(text=text)
 
-                inline_data = part.inline_data
-                audio_bytes = inline_data.data
-
-                # Start ffmpeg on first audio chunk using the detected sample rate
-                if not sample_rate_detected:
-                    sample_rate = _parse_sample_rate(inline_data.mime_type or "audio/L16;rate=24000")
-                    sample_rate_detected = True
-                    self._ffmpeg_proc = await asyncio.create_subprocess_exec(
-                        "ffmpeg",
-                        "-f", "s16le", "-ar", str(sample_rate), "-ac", "1",
-                        "-i", "pipe:0",
-                        "-f", "s16le", "-ar", "8000", "-ac", "1",
-                        "-loglevel", "error",
-                        "pipe:1",
-                        stdin=asyncio.subprocess.PIPE,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    reader_task = asyncio.create_task(self._read_and_send_pcm())
-                    self._log(f"ffmpeg started (input {sample_rate}Hz → 8000Hz)")
-
-                if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
-                    try:
-                        self._ffmpeg_proc.stdin.write(audio_bytes)
-                        await self._ffmpeg_proc.stdin.drain()
-                    except (BrokenPipeError, ConnectionResetError):
+                async for msg in session.receive():
+                    if not self._speaking:
                         break
 
-            # Signal EOF to ffmpeg
+                    # Audio arrives as inline_data in server_content parts
+                    if (msg.server_content and
+                            msg.server_content.model_turn and
+                            msg.server_content.model_turn.parts):
+                        for part in msg.server_content.model_turn.parts:
+                            if part.inline_data and part.inline_data.data:
+                                raw = part.inline_data.data
+                                if isinstance(raw, str):
+                                    raw = base64.b64decode(raw)
+                                if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
+                                    try:
+                                        self._ffmpeg_proc.stdin.write(raw)
+                                        await self._ffmpeg_proc.stdin.drain()
+                                    except (BrokenPipeError, ConnectionResetError):
+                                        break
+
+                    if msg.server_content and msg.server_content.turn_complete:
+                        break
+
+            # EOF to ffmpeg
             if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
                 try:
                     self._ffmpeg_proc.stdin.close()
@@ -158,8 +153,7 @@ class GeminiTTS:
                 except Exception:
                     pass
 
-            if reader_task:
-                await reader_task
+            await reader_task
 
             if self._speaking:
                 self._speaking = False
@@ -176,7 +170,7 @@ class GeminiTTS:
             await self._kill_ffmpeg()
 
     async def _read_and_send_pcm(self):
-        """Read resampled PCM from ffmpeg stdout and send to Exotel in 20ms chunks."""
+        """Read resampled PCM from ffmpeg and send to Exotel in 20ms chunks."""
         buffer = b""
         try:
             while self._speaking and self._ffmpeg_proc and self._ffmpeg_proc.stdout:
@@ -187,12 +181,9 @@ class GeminiTTS:
                 while len(buffer) >= CHUNK_BYTES and self._speaking:
                     pcm_chunk = buffer[:CHUNK_BYTES]
                     buffer = buffer[CHUNK_BYTES:]
-                    audio_b64 = base64.b64encode(pcm_chunk).decode("ascii")
-                    await self.on_audio(audio_b64)
-            # Flush remaining
+                    await self.on_audio(base64.b64encode(pcm_chunk).decode("ascii"))
             if buffer and self._speaking:
-                audio_b64 = base64.b64encode(buffer).decode("ascii")
-                await self.on_audio(audio_b64)
+                await self.on_audio(base64.b64encode(buffer).decode("ascii"))
         except asyncio.CancelledError:
             pass
         except Exception as e:

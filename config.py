@@ -40,7 +40,7 @@ TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")  # "sarvam", "elevenlabs", or
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Gemini TTS
-GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.1-flash-live-preview")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
 # Google Cloud TTS (uses same GEMINI_API_KEY)
