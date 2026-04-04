@@ -34,7 +34,12 @@ EXOTEL_API_URL = f"https://api.exotel.com/v1/Accounts/{EXOTEL_ACCOUNT_SID}/Calls
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "u7DoEF74Zzu8FP2dxDfk")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")  # "sarvam" or "elevenlabs"
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")  # "sarvam", "elevenlabs", or "gemini"
+
+# Gemini TTS (Live API)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
 
 # Webhook
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
