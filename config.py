@@ -61,23 +61,30 @@ NUM_TO_TAMIL = {
     6: "ஆறு", 7: "ஏழு", 8: "எட்டு", 9: "ஒன்பது", 10: "பத்து",
 }
 
-# Spoken Tamil number words (Tamil script — for Sarvam TTS)
-_UNITS = {1: "ஒன்னு", 2: "ரெண்டு", 3: "மூணு", 4: "நாலு", 5: "அஞ்சு",
+# Spoken Tamil number words — standard pronunciation for prices
+_UNITS = {1: "ஒன்ற��", 2: "இரண்டு", 3: "மூன்று", 4: "நான்கு", 5: "ஐந்து",
           6: "ஆறு", 7: "ஏழு", 8: "எட்டு", 9: "ஒன்பது"}
-_TENS = {10: "பத்து", 20: "இருபது", 30: "முப்பது", 40: "நாப்பது",
+_TENS = {10: "பத்து", 20: "இருபது", 30: "முப்பது", 40: "நாற்பது",
          50: "ஐம்பது", 60: "அறுபது", 70: "எழுபது", 80: "எண்பது", 90: "தொண்ணூறு"}
-_HUNDREDS = {1: "நூறு", 2: "இருநூறு", 3: "முன்னூறு", 4: "நானூறு",
+# Combining form of tens (when followed by units): ஐம்பது → ஐம்பத்து
+_TENS_COMBINE = {10: "பத்து", 20: "இருபத்து", 30: "முப்பத்து", 40: "நாற்பத்து",
+                 50: "ஐம்பத்து", 60: "அறுபத்து", 70: "எழுபத்து", 80: "எண்பத்து", 90: "தொண்ணூற்று"}
+_HUNDREDS = {1: "நூ��ு", 2: "இருநூறு", 3: "முன்னூறு", 4: "நானூறு",
              5: "ஐநூறு", 6: "அறுநூறு", 7: "எழுநூறு", 8: "எண்ணூறு", 9: "தொள்ளாயிரம்"}
-_HUNDREDS_COMBINE = {1: "நூத்தி", 2: "இருநூத்தி", 3: "முன்னூத்தி", 4: "நானூத்தி",
-                     5: "ஐநூத்தி", 6: "அறுநூத்தி", 7: "எழுநூத்தி", 8: "எண்ணூத்தி",
+_HUNDREDS_COMBINE = {1: "நூற்று", 2: "இருநூற்று", 3: "முன்னூற்று", 4: "நானூற்று",
+                     5: "ஐநூற்று", 6: "அறுநூற்று", 7: "எழுநூற்று", 8: "எண்ணூற்று",
                      9: "தொள்ளாயிரத்து"}
-_THOUSANDS_PREFIX = {1: "", 2: "ரெண்டு ", 3: "மூணு ", 4: "நாலு ", 5: "அஞ்சு ",
-                     6: "ஆறு ", 7: "ஏழு ", 8: "எட்டு ", 9: "ஒன்பது "}
+# Thousands: merged prefix (மூவாயிரம், ஏழாயிரம், etc.)
+_THOUSANDS = {1: "ஆயிரம்", 2: "இரண்டாயிரம்", 3: "மூவாயிரம்", 4: "நாலாயிரம்", 5: "ஐயாயிரம்",
+              6: "ஆ��ாயிரம்", 7: "ஏழாயிரம்", 8: "எட்டாயிரம்", 9: "ஒன்பதாயிரம்"}
+_THOUSANDS_COMBINE = {1: "ஆயிரத்து", 2: "இரண்டாயிரத்து", 3: "மூவாயிரத்து", 4: "நாலாயிரத்து",
+                      5: "ஐயாயிரத்து", 6: "ஆறாயிரத்து", 7: "ஏழாயிரத்து", 8: "எட்டாயிரத்து",
+                      9: "ஒன்பதாயிரத்து"}
 
 
 
 def amount_to_tamil(n: int) -> str:
-    """Convert numeric amount to spoken Tamil words (colloquial style)"""
+    """Convert numeric amount to spoken Tamil words (standard pronunciation for prices)."""
     n = int(n)
     if n == 0:
         return "பூஜ்யம்"
@@ -86,25 +93,24 @@ def amount_to_tamil(n: int) -> str:
     if n >= 1000:
         t = n // 1000
         n %= 1000
-        prefix = _THOUSANDS_PREFIX.get(t, f"{t} ")
         if n > 0:
-            parts.append(f"{prefix}ஆயிரத்து")
+            parts.append(_THOUSANDS_COMBINE.get(t, f"{t}ஆயிரத்து"))
         else:
-            parts.append(f"{prefix}ஆயிரம்")
+            parts.append(_THOUSANDS.get(t, f"{t}ஆயிரம்"))
     # Hundreds
     if n >= 100:
         h = n // 100
         n %= 100
         if n > 0:
-            parts.append(_HUNDREDS_COMBINE.get(h, f"{h} நூற்று"))
+            parts.append(_HUNDREDS_COMBINE.get(h, f"{h}நூற்று"))
         else:
-            parts.append(_HUNDREDS.get(h, f"{h} நூறு"))
+            parts.append(_HUNDREDS.get(h, f"{h}நூறு"))
     # Tens and units
     if n >= 10:
         t = (n // 10) * 10
         u = n % 10
         if u > 0:
-            parts.append(f"{_TENS[t]} {_UNITS[u]}")
+            parts.append(f"{_TENS_COMBINE[t]} {_UNITS[u]}")
         else:
             parts.append(_TENS[t])
     elif n > 0:
