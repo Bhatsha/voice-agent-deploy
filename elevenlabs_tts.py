@@ -86,8 +86,8 @@ class ElevenLabsTTS:
             "apply_text_normalization": "on",
             "seed": 42,
             "voice_settings": {
-                "stability": 0.9,
-                "similarity_boost": 0.9,
+                "stability": 0.45,
+                "similarity_boost": 0.75,
                 "style": 0.0,
                 "speed": 1.0,
                 "use_speaker_boost": True,

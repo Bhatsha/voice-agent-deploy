@@ -58,6 +58,8 @@ class VoiceAgent:
         "clear": "தெளிவா",
         "repeat": "மறுபடி",
         "request": "கோரிக்கை",
+        "Keeggi": "Kee-Gee",
+        "keeggi": "Kee-Gee",
     }
 
     MIN_TTS_DURATION_FOR_SILENCE_TIMEOUT = 1.2  # seconds
