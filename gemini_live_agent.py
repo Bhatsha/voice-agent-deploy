@@ -210,6 +210,13 @@ class GeminiLiveAgent:
                 parts=[types.Part(text=system_instruction)]
             ),
             tools=[_TOOLS],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=config.GEMINI_TTS_VOICE
+                    )
+                )
+            ),
         )
 
         # Start ffmpeg resample process
