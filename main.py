@@ -19,6 +19,7 @@ except Exception:
 
 import config
 from agent import VoiceAgent
+from gemini_live_agent import GeminiLiveAgent
 from sarvam_key_pool import SarvamKeyPool
 
 logging.basicConfig(
@@ -268,14 +269,24 @@ async def exotel_websocket(ws: WebSocket):
                     logger.error(f"No order data for call {call_sid} — ending connection")
                     break
 
-                agent = VoiceAgent(
-                    exotel_ws=ws,
-                    stream_sid=stream_sid,
-                    call_sid=call_sid,
-                    order_data=order_data,
-                    api_key=api_key,
-                    on_key_release=release_fn,
-                )
+                if config.AGENT_MODE == "gemini_live":
+                    agent = GeminiLiveAgent(
+                        exotel_ws=ws,
+                        stream_sid=stream_sid,
+                        call_sid=call_sid,
+                        order_data=order_data,
+                        api_key=config.GEMINI_API_KEY,
+                        on_key_release=release_fn,
+                    )
+                else:
+                    agent = VoiceAgent(
+                        exotel_ws=ws,
+                        stream_sid=stream_sid,
+                        call_sid=call_sid,
+                        order_data=order_data,
+                        api_key=api_key,
+                        on_key_release=release_fn,
+                    )
                 sessions[stream_sid] = agent
                 await agent.start()
 
