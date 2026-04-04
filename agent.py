@@ -87,6 +87,7 @@ class VoiceAgent:
         self._audio_chunks_sent_to_stt = 0
         self._call_ended = False
         self._webhook_sent = False
+        self._final_status = None  # Set when call outcome is decided, webhook sent in _end_call
 
         # Echo suppression tracking
         self._tts_last_finished = 0  # timestamp when TTS last finished generating
@@ -194,7 +195,7 @@ class VoiceAgent:
         # Graceful failure: if both STT and TTS failed to connect, end call immediately
         if not self.stt._connected and not self.tts._connected:
             await self._send_log("FATAL: Both STT and TTS failed to connect — ending call")
-            await self._send_webhook("NO_RESPONSE")
+            self._final_status = "NO_RESPONSE"
             self._call_ended = True
             self._release_key()
             return
@@ -377,7 +378,7 @@ class VoiceAgent:
                 self._call_ended = True
                 self._cancel_silence_timeout()
                 await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
-                await self._send_webhook(self._closing_status)
+                self._final_status = self._closing_status
                 await self._finish_call(self._closing_status)
                 return
             else:
@@ -425,7 +426,7 @@ class VoiceAgent:
                 self._unclear_count += 1
                 await self._send_log(f"Unclear response ({self._unclear_count}/{self._max_unclear_before_end})")
                 if self._unclear_count >= self._max_unclear_before_end:
-                    await self._send_webhook("UNCLEAR_RESPONSE")
+                    self._final_status = "UNCLEAR_RESPONSE"
                     await self._finish_call("UNCLEAR_RESPONSE")
                     return
                 # Otherwise let the agent keep trying — don't end call
@@ -733,6 +734,10 @@ class VoiceAgent:
         # Hang up the real Exotel call via REST API
         await self._hangup_exotel_call()
 
+        # Send webhook AFTER call ends — final status response
+        if self._final_status and not self._webhook_sent:
+            await self._send_webhook(self._final_status)
+
         await self._send_log(f"Call ended — {label}")
         logger.info(f"Call ended for {self.call_sid}: {status}")
 
@@ -817,7 +822,7 @@ class VoiceAgent:
                 logger.info(f"Silence during closing — ending with {self._closing_status}")
                 self._call_ended = True
                 await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
-                await self._send_webhook(self._closing_status)
+                self._final_status = self._closing_status
                 await self._finish_call(self._closing_status)
                 return
 
@@ -828,7 +833,7 @@ class VoiceAgent:
                 goodbye = "சரி... நன்றி."
                 self._last_agent_text = goodbye
                 await self._speak(goodbye)
-                await self._send_webhook(self._confirmation_pending)
+                self._final_status = self._confirmation_pending
                 await self._finish_call(self._confirmation_pending)
                 return
 
@@ -840,7 +845,7 @@ class VoiceAgent:
                 response = "சரி... பிறகு மீண்டும் அழைக்கிறேன்."
                 self._last_agent_text = response
                 await self._speak(response)
-                await self._send_webhook("NO_RESPONSE")
+                self._final_status = "NO_RESPONSE"
                 await self._end_call("NO_RESPONSE")
                 return
 
@@ -934,10 +939,13 @@ class VoiceAgent:
 
     async def stop(self):
         logger.info(f"Agent stopping for call {self.call_sid}")
-        # Send webhook if call was in closing flow but disconnected before webhook was sent
-        if self._call_closing and self._closing_status and not self._webhook_sent:
-            logger.info(f"ABRUPT DISCONNECT: sending webhook for {self._closing_status} before cleanup")
-            await self._send_webhook(self._closing_status)
+        # Set final status if call was in closing flow but disconnected before _end_call
+        if self._call_closing and self._closing_status and not self._final_status:
+            self._final_status = self._closing_status
+        # Send webhook if we have a final status but haven't sent it yet
+        if self._final_status and not self._webhook_sent:
+            logger.info(f"CLEANUP: sending webhook for {self._final_status} before cleanup")
+            await self._send_webhook(self._final_status)
         self._cancel_silence_timeout()
         if self._greeting_fallback_task and not self._greeting_fallback_task.done():
             self._greeting_fallback_task.cancel()
