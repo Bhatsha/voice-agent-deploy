@@ -366,35 +366,23 @@ class VoiceAgent:
 
         # Handle call closing flow — agent asked "வேற ஏதாவது இருக்கா?"
         if self._call_closing:
-            lower = text.lower().strip().rstrip(".?!")
-            text_len = len(text.strip())
-            order_words = ["ஆர்டர்", "order", "cancel", "reject", "வேணாம்", "வேண்டாம்",
-                           "மாத்து", "modify", "change", "எடுக்க", "item", "price", "விலை",
-                           "accept", "சரி", "ஓகே"]
-            has_order_words = any(w in lower for w in order_words)
-
-            if text_len <= 8 and not has_order_words:
-                # Short text with no order words — check for attention words first
-                attention_words = ["ஹலோ", "hello", "சொல்லுங்க", "கேட்குறீங்களா"]
-                is_attention = any(w in lower for w in attention_words)
-                if is_attention:
-                    # Vendor trying to get attention — reset closing, send to LLM
-                    logger.info(f"CLOSING RESET: Attention word in short text: '{text}'")
-                    self._call_closing = False
-                    self._closing_status = None
-                    self._confirmation_pending = None
-                else:
-                    # Simple no / short response — end call
-                    logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
-                    self._call_ended = True
-                    self._cancel_silence_timeout()
-                    await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
-                    await self._send_webhook(self._closing_status)
-                    await self._finish_call(self._closing_status)
-                    return
+            stripped = text.strip().rstrip(".?!").strip()
+            # Simple end responses — short negatives or goodbyes
+            simple_end = ["இல்லை", "இல்ல", "போதும்", "no", "nothing", "நோ",
+                          "ஒன்னும் இல்ல", "bye", "வணக்கம்", "அவ்வளவு தான்",
+                          "இல்ல இல்ல", "வேணாம்", "ஒன்னும் இல்லை"]
+            is_simple_end = stripped.lower() in simple_end or len(stripped) <= 4
+            if is_simple_end:
+                logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
+                self._call_ended = True
+                self._cancel_silence_timeout()
+                await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
+                await self._send_webhook(self._closing_status)
+                await self._finish_call(self._closing_status)
+                return
             else:
-                # Longer text or has order words — vendor has more to say
-                logger.info(f"CLOSING RESET: Vendor has more to say: '{text}' (len={text_len}, order_words={has_order_words})")
+                # Anything else — vendor has more to say, send to LLM
+                logger.info(f"CLOSING RESET: Vendor has more to say: '{text}'")
                 self._call_closing = False
                 self._closing_status = None
                 self._confirmation_pending = None
