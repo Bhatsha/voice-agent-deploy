@@ -367,9 +367,15 @@ class VoiceAgent:
         # Handle call closing flow — agent asked "வேற ஏதாவது இருக்கா?"
         if self._call_closing:
             lower = text.lower().strip().rstrip(".?!")
-            no_phrases = ["இல்லை", "இல்ல", "வேணாம்", "போதும்", "அவ்வளவு தான்", "no", "nothing", "நோ", "ஒன்னும் இல்ல", "bye", "வணக்கம்"]
-            is_no = any(p in lower for p in no_phrases) or len(text.strip()) <= 5
-            if is_no:
+            # Check if vendor is talking about the order (new intent) — send to LLM instead
+            order_words = ["ஆர்டர்", "order", "cancel", "reject", "வேணாம்", "வேண்டாம்",
+                           "மாத்து", "modify", "change", "எடுக்க", "item", "price", "விலை"]
+            has_order_intent = any(w in lower for w in order_words) and len(text.strip()) > 10
+            # Simple "no" / short response = OK to end
+            is_simple_no = not has_order_intent and (len(text.strip()) <= 5 or
+                lower in ["இல்லை", "இல்ல", "வேணாம்", "போதும்", "அவ்வளவு தான்",
+                           "no", "nothing", "நோ", "ஒன்னும் இல்ல", "bye", "வணக்கம்"])
+            if is_simple_no:
                 logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
                 await self._speak("சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!")
                 await self._send_webhook(self._closing_status)

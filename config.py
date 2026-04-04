@@ -168,7 +168,7 @@ def build_greeting_intro(order: dict) -> str:
     return (
         f"{order['vendor_name']}... "
         f"வணக்கம்... "
-        f"நான் {order['company_name']}ல இருந்து பேசுறேன்... "
+        f"நான் Keeggiல இருந்து பேசுறேன்... "
         f"உங்களுக்கு ஒரு புது ஆர்டர் வந்திருக்கு"
     )
 
