@@ -36,10 +36,17 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "u7DoEF74Zzu8FP2dxDfk")
 ELEVENLABS_MODEL = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "sarvam")  # "sarvam", "elevenlabs", or "gemini"
 
-# Gemini TTS (Live API)
+# Google / Gemini API key (shared)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# Gemini TTS
 GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Kore")
+
+# Google Cloud TTS (uses same GEMINI_API_KEY)
+GOOGLE_TTS_VOICE = os.getenv("GOOGLE_TTS_VOICE", "ta-IN-Wavenet-A")
+GOOGLE_TTS_LANGUAGE = os.getenv("GOOGLE_TTS_LANGUAGE", "ta-IN")
+GOOGLE_TTS_SPEED = float(os.getenv("GOOGLE_TTS_SPEED", "1.0"))
 
 # Webhook
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")

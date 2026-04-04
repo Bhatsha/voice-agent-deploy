@@ -14,6 +14,7 @@ from sarvam_tts import SarvamTTS
 from sarvam_llm import SarvamLLM
 from elevenlabs_tts import ElevenLabsTTS
 from gemini_tts import GeminiTTS
+from google_tts import GoogleTTS
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +174,13 @@ class VoiceAgent:
         is_real_call = not self.call_sid.startswith("test-")
         use_elevenlabs = config.TTS_PROVIDER == "elevenlabs" and config.ELEVENLABS_API_KEY
         use_gemini = config.TTS_PROVIDER == "gemini" and config.GEMINI_API_KEY
+        use_google = config.TTS_PROVIDER == "google" and config.GEMINI_API_KEY
 
-        if use_gemini:
+        if use_google:
+            self.tts = GoogleTTS(
+                on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
+            )
+        elif use_gemini:
             self.tts = GeminiTTS(
                 on_audio=self._on_tts_audio, on_log=self._send_log, on_done=self._on_tts_done,
             )
