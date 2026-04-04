@@ -338,8 +338,11 @@ class VoiceAgent:
             return
 
         # During confirmation wait, filter short ambiguous transcripts (noise like "ம்.", "ஆ")
-        # But allow them during normal conversation (vendor might say "5", "12" for modify)
-        if self._confirmation_pending and len(text) <= 4:
+        # But allow "ஹலோ" and other attention words — vendor is trying to get through
+        attention_words = ["ஹலோ", "hello", "சொல்லுங்க", "கேட்குறீங்களா"]
+        stripped = text.strip().rstrip(".?!")
+        is_attention = any(w in stripped.lower() for w in attention_words)
+        if self._confirmation_pending and len(text) <= 3 and not is_attention:
             logger.info(f"FILTER: short during confirmation: '{text}'")
             await self._send_log(f"Ignored short transcript during confirmation wait: '{text}'")
             return

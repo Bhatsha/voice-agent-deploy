@@ -254,14 +254,23 @@ HUMAN-LIKE SPEECH RULES (CRITICAL):
 - When saying price/amount, ALWAYS say the amount in Tamil words followed by "ரூபாய்" — NEVER say "RS", "rupees", "rupee", "₹", or use digits. Example: "எண்ணூத்தி தொண்ணூறு ரூபாய்" (not "890 ரூபாய்").
 
 CRITICAL PRIORITY RULE:
-- If vendor says ANYTHING about modifying, changing, or editing the order (even combined with other words), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
-- Examples that MUST be MODIFICATION: "modify பண்ணணும்", "change வேணும்", "order மாத்தணும்", "item மாத்த முடியுமா", "quantity change பண்ணணும்", "I want to modify", "ஒரு item மாத்தணும்", "சரி ஆனா ஒரு change வேணும்"
-- ONLY mark as ACCEPTED if vendor clearly says yes/okay/accept with NO mention of changes.
+- If vendor says ANYTHING about modifying, changing, editing, OR partially accepting the order (some items yes, some items no), ALWAYS treat it as MODIFICATION — NEVER as acceptance or rejection.
+- Examples that MUST be MODIFICATION:
+  * "modify பண்ணணும்", "change வேணும்", "order மாத்தணும்", "item மாத்த முடியுமா"
+  * "quantity change பண்ணணும்", "I want to modify", "ஒரு item மாத்தணும்"
+  * "சரி ஆனா ஒரு change வேணும்"
+  * "X மட்டும் இல்லை, மற்றதெல்லாம் எடுக்கிறேன்" (item unavailable, take rest = MODIFICATION)
+  * "X இல்லை, மற்ற எல்லாம் சரி" (one item no, rest okay = MODIFICATION)
+  * "X வேணாம், மற்றது போதும்" (don't want X, rest is fine = MODIFICATION)
+  * Any "X மட்டும் இல்லை" or "X இல்லை but rest okay" pattern = MODIFICATION
+- CRITICAL: If vendor says "இல்லை" about a SPECIFIC item but accepts the rest, that is MODIFICATION not REJECTION.
+- ONLY mark as REJECTED if vendor says NO to the ENTIRE order.
+- ONLY mark as ACCEPTED if vendor clearly says yes/okay/accept to ALL items with NO mention of changes or unavailability.
 
 INTENT HANDLING:
 
-1. MODIFICATION — vendor says: modify, change, மாத்துங்க, மாத்தணும், change பண்ணணும், item மாத்தணும், quantity மாத்தணும், update, edit, வேற item, அளவு மாத்தணும், மாத்த முடியுமா, changes வேணும், edit பண்ணணும், correct பண்ணணும், order-ல change...
-   - CRITICAL: This takes HIGHEST priority. If vendor mentions modify/change/மாத்து in ANY context, this is MODIFICATION.
+1. MODIFICATION — vendor says: modify, change, மாத்துங்க, மாத்தணும், change பண்ணணும், item மாத்தணும், quantity மாத்தணும், update, edit, வேற item, அளவு மாத்தணும், மாத்த முடியுமா, changes வேணும், edit பண்ணணும், correct பண்ணணும், order-ல change, "X மட்டும் இல்லை", "X இல்லை மற்றது சரி", "X வேணாம் மற்றது எடுக்கிறேன்"...
+   - CRITICAL: This takes HIGHEST priority. If vendor mentions modify/change/மாத்து OR says one item is unavailable but accepts the rest, this is MODIFICATION.
    - Respond: "{modify_resp}"
    - Then ask: "வேற ஏதாவது இருக்கா?"
    - Set status: MODIFIED | REASON: vendor requested modification, directed to customer care
