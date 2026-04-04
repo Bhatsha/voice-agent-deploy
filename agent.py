@@ -371,8 +371,11 @@ class VoiceAgent:
             # Simple end responses — short negatives or goodbyes
             simple_end = ["இல்லை", "இல்ல", "போதும்", "no", "nothing", "நோ",
                           "ஒன்னும் இல்ல", "bye", "வணக்கம்", "அவ்வளவு தான்",
-                          "இல்ல இல்ல", "வேணாம்", "ஒன்னும் இல்லை"]
-            is_simple_end = stripped.lower() in simple_end or len(stripped) <= 4
+                          "இல்ல இல்ல", "வேணாம்", "ஒன்னும் இல்லை",
+                          "சரி சரி", "சரி", "ஓகே", "ஓகே ஓகே", "ஆமா",
+                          "நன்றி", "thanks", "சரி போதும்", "சரி வணக்கம்",
+                          "ஓகே வணக்கம்", "சரி நன்றி", "ஓகே நன்றி"]
+            is_simple_end = stripped.lower() in simple_end or len(stripped) <= 6
             if is_simple_end:
                 logger.info(f"CALL END: Vendor said OK to end — closing with {self._closing_status}")
                 self._call_ended = True
@@ -445,7 +448,7 @@ class VoiceAgent:
                         if new_reason and new_reason not in self._rejection_reason:
                             self._rejection_reason = (self._rejection_reason + " | " + new_reason) if self._rejection_reason else new_reason
                     logger.info(f"CONFIRMED {terminal} — asking before ending")
-                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    closing_text = speak_text if (speak_text and "வேற" in speak_text) else (f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?")
                     await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = terminal
@@ -471,7 +474,7 @@ class VoiceAgent:
                     else:
                         # Not a question — enter closing flow with new status
                         logger.info(f"TERMINAL {terminal} (after change) — asking before ending")
-                        closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                        closing_text = speak_text if (speak_text and "வேற" in speak_text) else (f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?")
                         await self._speak(closing_text)
                         self._call_closing = True
                         self._closing_status = terminal
@@ -490,7 +493,7 @@ class VoiceAgent:
                 else:
                     # Terminal status with no question — combine LLM text + closing question
                     logger.info(f"TERMINAL {terminal} no question — asking before ending")
-                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    closing_text = speak_text if (speak_text and "வேற" in speak_text) else (f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?")
                     await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = terminal
@@ -500,7 +503,7 @@ class VoiceAgent:
                 implied = self._speak_implies_call_done(speak_text)
                 if implied:
                     logger.info(f"IMPLIED {implied} — asking before ending")
-                    closing_text = f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?"
+                    closing_text = speak_text if (speak_text and "வேற" in speak_text) else (f"{speak_text}... வேற ஏதாவது இருக்கா?" if speak_text else "சரி... வேற ஏதாவது இருக்கா?")
                     await self._speak(closing_text)
                     self._call_closing = True
                     self._closing_status = implied
@@ -582,6 +585,10 @@ class VoiceAgent:
         for phrase in accept_phrases:
             if phrase in lower:
                 return "ACCEPTED"
+        # Farewell detection: LLM says goodbye with நன்றி + வணக்கம் = call is done
+        has_farewell = ("நன்றி" in lower or "வணக்கம்" in lower) and ("நல்ல நாளா" in lower or "வணக்கம்" in lower)
+        if has_farewell and self._closing_status:
+            return self._closing_status
         return None
 
     def _parse_llm_response(self, response: str) -> tuple[str, str]:
