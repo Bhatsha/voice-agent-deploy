@@ -219,7 +219,7 @@ def build_system_prompt(order: dict) -> str:
     confirm_ex = "ஓகே! confirm ஆயிடுச்சு!"
     reject_ex = "ஓ... புரியுது..."
     casual_ex = "சரி சரி!"
-    modify_resp = "சரி, மாற்றம் வேணும்-னா Keeggi-கிட்ட தொடர்பு கொள்ளுங்க. நன்றி."
+    modify_resp = "சரி, order-ல மாற்றம் வேணும்-னா Keeggi customer care-ஐ நேரடியா தொடர்பு கொள்ளுங்க. அவங்க உங்களுக்கு help பண்ணுவாங்க."
     speak_fmt = "Tamil speech text only — natural and short"
 
     order_details = (
@@ -292,8 +292,8 @@ INTENT HANDLING:
 1. MODIFICATION — vendor says: modify, change, மாத்துங்க, மாத்தணும், change பண்ணணும், item மாத்தணும், quantity மாத்தணும், update, edit, வேற item, அளவு மாத்தணும், மாத்த முடியுமா, changes வேணும், edit பண்ணணும், correct பண்ணணும், order-ல change, "X மட்டும் இல்லை", "X இல்லை மற்றது சரி", "X வேணாம் மற்றது எடுக்கிறேன்"...
    - CRITICAL: This takes HIGHEST priority. If vendor mentions modify/change/மாத்து OR says one item is unavailable but accepts the rest, this is MODIFICATION.
    - Respond: "{modify_resp}"
+   - call set_call_status(status="MODIFIED", reason="<what vendor wants changed in Tamil>")
    - Then ask: "வேற ஏதாவது இருக்கா?"
-   - Set status: MODIFIED | REASON: vendor requested modification, directed to customer care
    - When vendor says no/nothing else: "சரி, நன்றி! நல்ல நாளா இருக்கட்டும்... வணக்கம்!"
    - ONLY end call after vendor says okay to end.
 
