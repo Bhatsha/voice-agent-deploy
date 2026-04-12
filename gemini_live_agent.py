@@ -465,6 +465,11 @@ class GeminiLiveAgent:
                                 await self._session.send_tool_response(
                                     function_responses=tool_responses
                                 )
+                                # Nudge Gemini to continue speaking after tool processing
+                                # (without this, Gemini silently waits for more input)
+                                await asyncio.sleep(0.2)
+                                if not self._call_ended:
+                                    await self._session.send_realtime_input(text=".")
                             except Exception as e:
                                 logger.error(f"Tool response error: {e}")
 
