@@ -175,6 +175,7 @@ class GeminiLiveAgent:
         self._final_reason: str = ""
         self._gemini_speaking = False
         self._last_audio_finished: float = 0.0
+        self._end_call_timeout_task: Optional[asyncio.Task] = None
 
         # Gemini session (set in start())
         self._client: Optional[genai.Client] = None
@@ -289,7 +290,7 @@ class GeminiLiveAgent:
             await self._send_webhook()
 
         # Cancel background tasks
-        for task in (self._receive_task, self._ffmpeg_reader_task):
+        for task in (self._receive_task, self._ffmpeg_reader_task, self._end_call_timeout_task):
             if task and not task.done():
                 task.cancel()
                 try:
@@ -438,7 +439,15 @@ class GeminiLiveAgent:
                                 logger.info(
                                     f"Status set: {self._final_status} reason={self._final_reason!r}"
                                 )
+                                # Start a 20s timeout — if end_call tool never fires, force end
+                                if self._end_call_timeout_task is None:
+                                    self._end_call_timeout_task = asyncio.create_task(
+                                        self._end_call_timeout()
+                                    )
                             elif fc.name == "end_call":
+                                # Cancel the timeout since end_call fired properly
+                                if self._end_call_timeout_task:
+                                    self._end_call_timeout_task.cancel()
                                 # Schedule end_call as a task so we can respond to the tool first
                                 asyncio.create_task(self._end_call())
 
@@ -481,6 +490,16 @@ class GeminiLiveAgent:
         except Exception as e:
             if not self._call_ended:
                 logger.error(f"Gemini receive loop error: {e}")
+
+    async def _end_call_timeout(self):
+        """Fallback: force-end call 20s after set_call_status if end_call tool never fires."""
+        try:
+            await asyncio.sleep(20)
+            if not self._call_ended:
+                logger.warning("end_call tool never fired — force-ending call after timeout")
+                await self._end_call()
+        except asyncio.CancelledError:
+            pass
 
     async def _end_call(self):
         """Handle end_call tool: send webhook and hang up."""
@@ -539,14 +558,31 @@ class GeminiLiveAgent:
 
     async def _hangup_exotel_call(self):
         """
-        Hang up the Exotel call by closing the WebSocket.
-        Exotel advances to the next applet (Hangup) when the WebSocket closes.
+        Hang up the Exotel call via REST API, then close the WebSocket as fallback.
         """
         if not self.call_sid or self.call_sid.startswith("test-"):
             return  # Skip for browser tester
 
+        # Primary: Exotel REST API hangup
+        if config.EXOTEL_ACCOUNT_SID and config.EXOTEL_API_KEY and config.EXOTEL_API_TOKEN:
+            try:
+                url = (
+                    f"https://api.exotel.com/v1/Accounts/{config.EXOTEL_ACCOUNT_SID}"
+                    f"/Calls/{self.call_sid}/"
+                )
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(
+                        url,
+                        data={"Status": "completed"},
+                        auth=(config.EXOTEL_API_KEY, config.EXOTEL_API_TOKEN),
+                    )
+                    logger.info(f"Exotel REST hangup: {resp.status_code} {resp.text[:100]}")
+            except Exception as e:
+                logger.error(f"Exotel REST hangup error: {e}")
+
+        # Fallback: close WebSocket (Exotel moves to next applet)
         try:
             await self.exotel_ws.close()
             logger.info("Closed WebSocket — Exotel will hangup")
         except Exception as e:
-            logger.error(f"WebSocket close error: {e}")
+            logger.debug(f"WebSocket close: {e}")
