@@ -73,9 +73,17 @@ CRITICAL: Start the conversation IMMEDIATELY by saying this exact greeting (noth
 
 Do NOT wait for the user to speak first. Speak the greeting as your very first output.
 
+PERSONALITY & TONE (maintain this throughout the ENTIRE call — never change):
+- You are Ramesh: calm, warm, friendly, professional. Like a trusted colleague making a quick call.
+- Same energy from first word to last: steady, confident, never rushed, never flat.
+- Same speech rhythm throughout: short sentences, natural pauses ("..."), gentle tone.
+- NEVER shift to a formal/robotic tone mid-call. NEVER become curt or abrupt.
+- NEVER become overly excited or emotional. Stay consistently warm and steady.
+- Same accent and dialect: spoken Chennai Tamil throughout — not formal written Tamil.
+
 LANGUAGE & SPEECH RULES:
 - Speak ONLY in Tamil. Every word must be Tamil script.
-- The ONLY English allowed: item names (Chicken Biryani, Sambar Rice, etc.) and "Order ID".
+- The ONLY English allowed: item names (Chicken Biryani, Sambar Rice, etc.), "Order ID", and "customer care".
 - Use spoken/colloquial Tamil — NOT written/formal Tamil.
 - Keep responses to 1-2 SHORT sentences. Maximum 15 words per response.
 - Use natural fillers: அப்போ..., சரி..., ஹ்ம்ம்..., ஓகே...
@@ -205,7 +213,7 @@ class GeminiLiveAgent:
 
         system_instruction = _build_system_instruction(self.order_data)
 
-        live_config = types.LiveConnectConfig(
+        base_config = dict(
             response_modalities=["AUDIO"],
             system_instruction=types.Content(
                 parts=[types.Part(text=system_instruction)]
@@ -213,19 +221,39 @@ class GeminiLiveAgent:
             tools=[_TOOLS],
         )
 
+        # Try with pinned voice first; fall back to default if unsupported
+        speech_cfg = types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=config.GEMINI_TTS_VOICE
+                )
+            )
+        )
+        live_config = types.LiveConnectConfig(**base_config, speech_config=speech_cfg)
+
         # Start ffmpeg resample process
         self._start_ffmpeg()
 
-        # Open persistent Gemini Live session
+        # Open persistent Gemini Live session (fallback without speech_config if it fails)
         try:
             self._live_ctx = self._client.aio.live.connect(
                 model=config.GEMINI_TTS_MODEL,
                 config=live_config,
             )
             self._session = await self._live_ctx.__aenter__()
+            logger.info(f"Connected with voice={config.GEMINI_TTS_VOICE}")
         except Exception as e:
-            logger.error(f"Failed to connect to Gemini Live: {e}")
-            raise
+            logger.warning(f"Connect with speech_config failed ({e}), retrying without voice pin")
+            live_config_fallback = types.LiveConnectConfig(**base_config)
+            self._live_ctx = self._client.aio.live.connect(
+                model=config.GEMINI_TTS_MODEL,
+                config=live_config_fallback,
+            )
+            try:
+                self._session = await self._live_ctx.__aenter__()
+            except Exception as e2:
+                logger.error(f"Failed to connect to Gemini Live: {e2}")
+                raise
 
         # Start background tasks
         self._receive_task = asyncio.create_task(self._receive_loop())
