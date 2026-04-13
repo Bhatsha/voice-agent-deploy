@@ -197,6 +197,12 @@ class GeminiLiveAgent:
         self._as_trace = None
         self._turn_start: float = 0.0
         self._connect_start: float = 0.0
+        # Token estimation from audio bytes (Gemini Live doesn't return token counts)
+        # 8kHz 16-bit mono = 16000 bytes/sec; 24kHz 16-bit mono = 48000 bytes/sec
+        # Google charges ~25 tokens/sec for audio
+        self._turn_input_bytes: int = 0    # vendor audio bytes sent this turn
+        self._turn_output_bytes: int = 0   # agent audio bytes received this turn
+        self._system_prompt_tokens: int = 0
         if _AGENSIGHTS_AVAILABLE and config.AGENSIGHTS_API_KEY:
             try:
                 self._as_client = _AgenSights(api_key=config.AGENSIGHTS_API_KEY)
@@ -230,6 +236,7 @@ class GeminiLiveAgent:
         )
 
         system_instruction = _build_system_instruction(self.order_data)
+        self._system_prompt_tokens = len(system_instruction) // 4  # ~4 chars per token
 
         base_config = dict(
             response_modalities=["AUDIO"],
@@ -336,6 +343,7 @@ class GeminiLiveAgent:
 
         try:
             audio_bytes = base64.b64decode(payload)
+            self._turn_input_bytes += len(audio_bytes)
             await self._session.send_realtime_input(
                 audio=types.Blob(data=audio_bytes, mime_type="audio/pcm;rate=8000")
             )
@@ -516,6 +524,7 @@ class GeminiLiveAgent:
                     # ---- Audio output ----
                     if response.data:
                         self._gemini_speaking = True
+                        self._turn_output_bytes += len(response.data)
                         await self._feed_ffmpeg(response.data)
 
                     # ---- Tool calls ----
@@ -590,18 +599,30 @@ class GeminiLiveAgent:
                         turn_ms = int((time.time() - self._turn_start) * 1000) if self._turn_start else 0
                         logger.info(f"Turn complete — {turn_ms}ms — waiting for next input")
 
+                        # Estimate tokens from audio bytes (25 tokens/sec)
+                        # Input: 8kHz 16-bit = 16000 bytes/sec
+                        # Output: 24kHz 16-bit = 48000 bytes/sec
+                        input_tokens = int(self._turn_input_bytes / 16000 * 25) + self._system_prompt_tokens
+                        output_tokens = int(self._turn_output_bytes / 48000 * 25)
+                        # System prompt only counted once (first turn)
+                        self._system_prompt_tokens = 0
+
                         # Track turn as LLM call in AgenSights
                         if self._as_trace and turn_ms > 0:
                             try:
                                 self._as_trace.llm_call(
                                     model=config.GEMINI_TTS_MODEL,
-                                    input_tokens=0,
-                                    output_tokens=0,
+                                    input_tokens=input_tokens,
+                                    output_tokens=output_tokens,
                                     latency_ms=turn_ms,
                                 )
                             except Exception:
                                 pass
-                        self._turn_start = time.time()  # reset for next turn
+
+                        # Reset counters for next turn
+                        self._turn_input_bytes = 0
+                        self._turn_output_bytes = 0
+                        self._turn_start = time.time()
 
                         # Flush ffmpeg by sending a brief silence so buffered audio drains
                         if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
