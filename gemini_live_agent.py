@@ -315,14 +315,12 @@ class GeminiLiveAgent:
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._ffmpeg_reader_task = asyncio.create_task(self._ffmpeg_reader_loop())
 
-        # Trigger Gemini to speak the greeting immediately using silence audio
+        # Trigger Gemini to speak the greeting immediately
+        # text="." works here — Gemini sees it as user input and responds with the greeting
         self._turn_start = time.time()
         await asyncio.sleep(0.3)
         try:
-            silence = b"\x00" * 3200  # 200ms silence at 8kHz mono s16le
-            await self._session.send_realtime_input(
-                audio=types.Blob(data=silence, mime_type="audio/pcm;rate=8000")
-            )
+            await self._session.send_realtime_input(text=".")
             logger.info("Greeting trigger sent to Gemini")
         except Exception as e:
             logger.error(f"Failed to send greeting trigger: {e}")
