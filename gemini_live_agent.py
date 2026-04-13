@@ -308,11 +308,14 @@ class GeminiLiveAgent:
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._ffmpeg_reader_task = asyncio.create_task(self._ffmpeg_reader_loop())
 
-        # Trigger Gemini to speak the greeting immediately
+        # Trigger Gemini to speak the greeting immediately using silence audio
         self._turn_start = time.time()
         await asyncio.sleep(0.3)
         try:
-            await self._session.send_realtime_input(text=".")
+            silence = b"\x00" * 3200  # 200ms silence at 8kHz mono s16le
+            await self._session.send_realtime_input(
+                audio=types.Blob(data=silence, mime_type="audio/pcm;rate=8000")
+            )
             logger.info("Greeting trigger sent to Gemini")
         except Exception as e:
             logger.error(f"Failed to send greeting trigger: {e}")
@@ -565,11 +568,18 @@ class GeminiLiveAgent:
                                 await self._session.send_tool_response(
                                     function_responses=tool_responses
                                 )
-                                # Nudge Gemini to continue speaking after tool processing
-                                # (without this, Gemini silently waits for more input)
-                                await asyncio.sleep(0.2)
+                                # Nudge Gemini to continue speaking after tool processing.
+                                # text="." breaks audio-only sessions — use silence audio instead.
+                                await asyncio.sleep(0.3)
                                 if not self._call_ended:
-                                    await self._session.send_realtime_input(text=".")
+                                    # 200ms silence at 8kHz mono s16le
+                                    silence = b"\x00" * 3200
+                                    await self._session.send_realtime_input(
+                                        audio=types.Blob(
+                                            data=silence,
+                                            mime_type="audio/pcm;rate=8000",
+                                        )
+                                    )
                             except Exception as e:
                                 logger.error(f"Tool response error: {e}")
 
