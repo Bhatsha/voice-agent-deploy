@@ -20,6 +20,13 @@ from google.genai import types
 
 import config
 
+# AgenSights — optional observability (skipped if API key not set)
+try:
+    from agensights import AgenSights as _AgenSights
+    _AGENSIGHTS_AVAILABLE = True
+except ImportError:
+    _AGENSIGHTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -185,6 +192,17 @@ class GeminiLiveAgent:
         self._last_audio_finished: float = 0.0
         self._end_call_timeout_task: Optional[asyncio.Task] = None
 
+        # AgenSights observability
+        self._as_client = None
+        self._as_trace = None
+        self._turn_start: float = 0.0
+        self._connect_start: float = 0.0
+        if _AGENSIGHTS_AVAILABLE and config.AGENSIGHTS_API_KEY:
+            try:
+                self._as_client = _AgenSights(api_key=config.AGENSIGHTS_API_KEY)
+            except Exception as e:
+                logger.warning(f"AgenSights init failed: {e}")
+
         # Gemini session (set in start())
         self._client: Optional[genai.Client] = None
         self._session = None
@@ -231,10 +249,24 @@ class GeminiLiveAgent:
         )
         live_config = types.LiveConnectConfig(**base_config, speech_config=speech_cfg)
 
+        # Start AgenSights trace for this call
+        if self._as_client:
+            try:
+                self._as_trace = self._as_client.trace(
+                    "keeggi-voice-agent",
+                    workflow_id=self.call_sid,
+                )
+                self._as_trace.__enter__()
+                logger.info("AgenSights trace started")
+            except Exception as e:
+                logger.warning(f"AgenSights trace start failed: {e}")
+                self._as_trace = None
+
         # Start ffmpeg resample process
         self._start_ffmpeg()
 
         # Open persistent Gemini Live session (fallback without speech_config if it fails)
+        self._connect_start = time.time()
         try:
             self._live_ctx = self._client.aio.live.connect(
                 model=config.GEMINI_TTS_MODEL,
@@ -255,13 +287,29 @@ class GeminiLiveAgent:
                 logger.error(f"Failed to connect to Gemini Live: {e2}")
                 raise
 
+        connect_ms = int((time.time() - self._connect_start) * 1000)
+        logger.info(f"GeminiLiveAgent connected — call {self.call_sid} ({connect_ms}ms)")
+
+        # Track connect latency in AgenSights
+        if self._as_trace:
+            try:
+                with self._as_trace.span("gemini_connect"):
+                    pass  # duration auto-recorded; we log it manually below
+                self._as_trace.llm_call(
+                    model=config.GEMINI_TTS_MODEL,
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=connect_ms,
+                )
+            except Exception:
+                pass
+
         # Start background tasks
         self._receive_task = asyncio.create_task(self._receive_loop())
         self._ffmpeg_reader_task = asyncio.create_task(self._ffmpeg_reader_loop())
 
-        logger.info(f"GeminiLiveAgent connected — call {self.call_sid}")
-
         # Trigger Gemini to speak the greeting immediately
+        self._turn_start = time.time()
         await asyncio.sleep(0.3)
         try:
             await self._session.send_realtime_input(text=".")
@@ -342,6 +390,18 @@ class GeminiLiveAgent:
         if self._on_key_release:
             try:
                 self._on_key_release()
+            except Exception:
+                pass
+
+        # Close AgenSights trace
+        if self._as_trace:
+            try:
+                self._as_trace.__exit__(None, None, None)
+            except Exception:
+                pass
+        if self._as_client:
+            try:
+                self._as_client.close()
             except Exception:
                 pass
 
@@ -460,6 +520,7 @@ class GeminiLiveAgent:
                         tool_responses = []
                         for fc in response.tool_call.function_calls:
                             logger.info(f"Tool call: {fc.name} args={dict(fc.args)}")
+                            tool_start = time.time()
 
                             if fc.name == "set_call_status":
                                 self._final_status = fc.args.get("status")
@@ -478,6 +539,17 @@ class GeminiLiveAgent:
                                     self._end_call_timeout_task.cancel()
                                 # Schedule end_call as a task so we can respond to the tool first
                                 asyncio.create_task(self._end_call())
+
+                            # Track tool call in AgenSights
+                            if self._as_trace:
+                                try:
+                                    tool_ms = int((time.time() - tool_start) * 1000)
+                                    self._as_trace.tool_call(
+                                        tool_name=fc.name,
+                                        latency_ms=tool_ms,
+                                    )
+                                except Exception:
+                                    pass
 
                             tool_responses.append(
                                 types.FunctionResponse(
@@ -505,7 +577,22 @@ class GeminiLiveAgent:
                     if response.server_content and response.server_content.turn_complete:
                         self._gemini_speaking = False
                         self._last_audio_finished = time.time()
-                        logger.info("Turn complete — waiting for next input")
+                        turn_ms = int((time.time() - self._turn_start) * 1000) if self._turn_start else 0
+                        logger.info(f"Turn complete — {turn_ms}ms — waiting for next input")
+
+                        # Track turn as LLM call in AgenSights
+                        if self._as_trace and turn_ms > 0:
+                            try:
+                                self._as_trace.llm_call(
+                                    model=config.GEMINI_TTS_MODEL,
+                                    input_tokens=0,
+                                    output_tokens=0,
+                                    latency_ms=turn_ms,
+                                )
+                            except Exception:
+                                pass
+                        self._turn_start = time.time()  # reset for next turn
+
                         # Flush ffmpeg by sending a brief silence so buffered audio drains
                         if self._ffmpeg_proc and self._ffmpeg_proc.stdin:
                             try:

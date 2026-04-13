@@ -52,6 +52,9 @@ GOOGLE_TTS_SPEED = float(os.getenv("GOOGLE_TTS_SPEED", "1.0"))
 # Webhook
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 
+# AgenSights observability
+AGENSIGHTS_API_KEY = os.getenv("AGENSIGHTS_API_KEY", "")
+
 # Audio settings
 SAMPLE_RATE = 8000
 LANGUAGE = "ta-IN"
